@@ -29,7 +29,19 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 
 任务 2 只建立测试工程入口，尚未创建测试用例，因此此时直接运行 pytest 会显示 `collected 0 items` 并返回退出码 5。任务 3 将先创建 Settings 的失败测试，再开始正式的红—绿 TDD 循环。
 
-阶段 0 后续加入 FastAPI 应用工厂后，开发服务将使用 8010 端口启动。
+## 启动 API
+
+应用通过工厂函数创建。在 Windows PowerShell 中启动开发服务：
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010
+```
+
+启动后可以访问：
+
+- 存活检查：`http://127.0.0.1:8010/api/v1/health/live`
+- 接口文档：`http://127.0.0.1:8010/docs`
+- OpenAPI：`http://127.0.0.1:8010/openapi.json`
 
 ## 环境变量
 

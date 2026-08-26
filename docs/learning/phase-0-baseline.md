@@ -146,6 +146,19 @@ Settings 的 TDD 与本人练习已通过：
 - 学习者亲手补充连续请求 ID 唯一性断言；测试环境统一使用 `ASGITransport + AsyncClient`；
 - mutation check 将生成逻辑临时替换为固定 ID 后，唯一性测试准确失败；恢复 UUID4 后测试重新通过。
 
+## 任务 5 学习验收记录
+
+验收日期：2026-08-26
+
+FastAPI 健康检查纵向切片已完成：
+
+- RED 因 `app.main` 不存在而失败；实现 Schema、Router、应用工厂及中间件组装后进入 GREEN；
+- 真实 API 测试验证 `GET /api/v1/health/live` 返回 200、精确 JSON 和相同的 `X-Request-ID`，并验证 `/docs` 可访问；
+- Uvicorn 使用 `app.main:create_app --factory` 在 `127.0.0.1:8010` 成功启动；健康检查、接口文档和 OpenAPI 均返回 200；
+- OpenAPI 元数据为 `MarketMind AI`、版本 `0.1.0`，并包含 `/api/v1/health/live` 路径。
+
+任务 5 不新增重复的本人小练习；任务 6 将集中完成 `ready` 端点、`APP_DEBUG`、故意制造测试失败、手工运行和口述验收。
+
 ## 阶段 0 面试口述题
 
 以下问题将在相关代码存在后，于最终学习门禁中回答：
