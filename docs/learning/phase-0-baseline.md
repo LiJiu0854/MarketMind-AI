@@ -124,6 +124,17 @@ git status --short --untracked-files=all
 
 术语纠正：`.env` 不是“仓库密钥”，`pyproject.toml` 中的 `[tool.*]` 也不是私有配置表。
 
+## 任务 3 学习验收记录
+
+验收日期：2026-08-26
+
+Settings 的 TDD 与本人练习已通过：
+
+- 首次 RED 因 `app.core.config` 不存在而失败，证明测试依赖真实配置模块；
+- 最小实现加入类型化默认值、环境变量读取、整数转换和 `SecretStr` 密钥保护后，原有 3 个测试进入 GREEN；
+- 学习者先编写 `app_version` 默认值和环境变量覆盖测试，观察到 2 个 `AttributeError`，再亲手添加字段使 5 个测试全部通过；
+- 学习者能够区分语法错误、fixture 准备错误和功能缺失导致的有效 RED，并完成 Ruff 与 mypy 清理。
+
 ## 阶段 0 面试口述题
 
 以下问题将在相关代码存在后，于最终学习门禁中回答：

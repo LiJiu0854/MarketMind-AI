@@ -19,6 +19,7 @@
 - 开发端口使用 `8010`。
 - API Key 不得写入源代码、测试、日志或 Git。
 - 面向学习者的项目文档默认使用中文；命令、路径、代码标识符和约定的 Git 提交信息保持原文。
+- 从阶段 1 开始，每个阶段固定拆分为 4 个可独立解释、测试、验收和提交的任务。
 - 功能行为必须遵循红—绿—重构的 TDD 流程：先看到测试失败，再写最小实现，然后看到测试通过，最后运行质量检查。
 - 每次只完成一个任务，得到用户确认后才能开始下一个任务。
 - 阶段 0 不得连接 MySQL、Redis、LLM、前端或 Docker。
@@ -122,13 +123,13 @@ MarketMind-AI/
 
 **产出：** 提供包含 `app_name`、`app_env`、`app_host`、`app_port`、`log_level`、`siliconflow_base_url`、`siliconflow_model` 和 `siliconflow_api_key` 的类型化配置对象。
 
-- [ ] 为安全默认值、环境变量覆盖、端口整数解析、可选 API Key 和不会泄露密钥的 `repr` 编写测试。
-- [ ] 只运行 `tests/unit/core/test_config.py`，看到测试因 `app.core.config` 不存在而失败。
-- [ ] 实现让测试通过所需的最小 Pydantic Settings 模型。
-- [ ] 再次运行聚焦测试并看到通过。
-- [ ] 运行 Ruff、mypy 和完整测试。
-- [ ] 完成任务 3 本人练习并得到用户确认。
-- [ ] 使用 `feat: add typed application settings` 创建提交。
+- [x] 为安全默认值、环境变量覆盖、端口整数解析、可选 API Key 和不会泄露密钥的 `repr` 编写测试。
+- [x] 只运行 `tests/unit/core/test_config.py`，看到测试因 `app.core.config` 不存在而失败。
+- [x] 实现让测试通过所需的最小 Pydantic Settings 模型。
+- [x] 再次运行聚焦测试并看到通过。
+- [x] 运行 Ruff、mypy 和完整测试。
+- [x] 完成任务 3 本人练习并得到用户确认。
+- [x] 使用 `feat: add typed application settings` 创建提交。
 
 ### 任务 4：使用 TDD 添加请求 ID 中间件
 
