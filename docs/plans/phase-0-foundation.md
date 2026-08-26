@@ -103,14 +103,14 @@ MarketMind-AI/
 
 **产出：** 建立声明了运行依赖与质量检查依赖、可以安装使用的 Python 3.12 开发环境。
 
-- [ ] 使用 `git check-ignore -v .env` 确认 `.env` 尚未被忽略；命令不得返回匹配规则。
-- [ ] 添加 `.gitignore`，再使用 `git check-ignore -v .env` 确认 `.env` 已被忽略。
-- [ ] 创建只包含安全非敏感默认值、API Key 留空的 `.env.example`。
-- [ ] 在 `pyproject.toml` 中定义项目元数据、依赖、pytest 路径、Ruff 规则和严格 mypy 设置。
-- [ ] 使用 Python 3.12 创建 `.venv`，并安装项目开发依赖。
-- [ ] 运行已配置的 Ruff、mypy 和 pytest 命令，证明工程骨架可以使用。
-- [ ] 完成任务 2 本人练习并得到用户确认。
-- [ ] 使用 `build: scaffold MarketMind AI project` 创建提交。
+- [x] 使用 `git check-ignore -v .env` 确认 `.env` 尚未被忽略；命令不得返回匹配规则。
+- [x] 添加 `.gitignore`，再使用 `git check-ignore -v .env` 确认 `.env` 已被忽略。
+- [x] 创建只包含安全非敏感默认值、API Key 留空的 `.env.example`。
+- [x] 在 `pyproject.toml` 中定义项目元数据、依赖、pytest 路径、Ruff 规则和严格 mypy 设置。
+- [x] 使用 Python 3.12 创建 `.venv`，并安装项目开发依赖。
+- [x] 运行已配置的 Ruff、mypy 和 pytest 命令；Ruff 与 mypy 通过，pytest 在尚无测试用例时按约定返回退出码 5。
+- [x] 完成任务 2 本人练习并得到用户确认。
+- [x] 使用 `build: scaffold MarketMind AI project` 创建提交。
 
 ### 任务 3：使用 TDD 添加类型化应用配置
 
