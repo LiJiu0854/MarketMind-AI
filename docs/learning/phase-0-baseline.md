@@ -135,6 +135,17 @@ Settings 的 TDD 与本人练习已通过：
 - 学习者先编写 `app_version` 默认值和环境变量覆盖测试，观察到 2 个 `AttributeError`，再亲手添加字段使 5 个测试全部通过；
 - 学习者能够区分语法错误、fixture 准备错误和功能缺失导致的有效 RED，并完成 Ruff 与 mypy 清理。
 
+## 任务 4 学习验收记录
+
+验收日期：2026-08-26
+
+请求 ID 中间件的 TDD 与本人练习已通过：
+
+- RED 因 `app.middleware.request_id` 不存在而失败，最小实现加入 UUID4 生成、客户端 ID 透传、`request.state` 写入和响应头回写后进入 GREEN；
+- 测试通过真实 FastAPI 应用与 HTTPX 请求验证中间件，不使用 Mock；
+- 学习者亲手补充连续请求 ID 唯一性断言；测试环境统一使用 `ASGITransport + AsyncClient`；
+- mutation check 将生成逻辑临时替换为固定 ID 后，唯一性测试准确失败；恢复 UUID4 后测试重新通过。
+
 ## 阶段 0 面试口述题
 
 以下问题将在相关代码存在后，于最终学习门禁中回答：
