@@ -33,3 +33,17 @@ async def test_docs_are_available() -> None:
         response = await client.get("/docs")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_ready_health_returns_ok() -> None:
+    """就绪检查响应不符合公开契约时应失败。"""
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/v1/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "service": "MarketMind AI",
+    }

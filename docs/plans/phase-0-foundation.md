@@ -178,18 +178,19 @@ MarketMind-AI/
 
 - 修改：`backend/app/core/config.py`
 - 修改：`backend/app/api/v1/health.py`
+- 修改：`.env.example`
 - 修改：任务 3 和任务 5 创建的配置与健康检查测试
 - 修改：`docs/learning/phase-0-baseline.md`
 
 **产出：** 由用户亲手实现就绪检查端点和调试配置，并记录阶段验收证据。
 
-- [ ] 用户在指导下亲手添加 `GET /api/v1/health/ready`，Agent 不代写实现。
-- [ ] 用户在指导下亲手添加 `APP_DEBUG` 及其环境变量覆盖测试，Agent 不代写实现。
-- [ ] 用户故意写错一次健康检查响应字段，观察测试失败，然后修复。
-- [ ] 运行 Ruff、mypy 和完整测试。
-- [ ] 在 8010 端口手工启动服务，验证阶段端点。
-- [ ] 复习常见故障排查方法并回答阶段面试口述题。
-- [ ] 使用 `docs: complete phase 0 learning gate` 创建提交。
+- [x] 用户在指导下亲手添加 `GET /api/v1/health/ready`，Agent 不代写实现。
+- [x] 用户在指导下亲手添加 `APP_DEBUG` 及其环境变量覆盖测试，Agent 不代写实现。
+- [x] 用户故意写错一次健康检查响应字段，观察测试失败，然后修复。
+- [x] 运行 Ruff、mypy 和完整测试。
+- [x] 在 8010 端口手工启动服务，验证阶段端点。
+- [x] 复习常见故障排查方法并回答阶段面试口述题。
+- [x] 使用 `docs: complete phase 0 learning gate` 创建提交。
 - [ ] 本地检查通过后，使用 `git push -u origin phase/0-foundation` 推送阶段分支。
 - [ ] 停止并等待本人明确验收；不得合并或创建标签。
 

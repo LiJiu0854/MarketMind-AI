@@ -12,6 +12,7 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "APP_ENV",
     "APP_HOST",
     "APP_PORT",
+    "APP_DEBUG",
     "APP_VERSION",
     "LOG_LEVEL",
     "SILICONFLOW_BASE_URL",
@@ -37,6 +38,7 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.app_host == "127.0.0.1"
     assert settings.app_port == 8010
     assert settings.log_level == "INFO"
+    assert settings.app_debug is False
     assert settings.siliconflow_base_url == "https://api.siliconflow.cn/v1"
     assert settings.siliconflow_model == "deepseek-ai/DeepSeek-V4-Flash"
     assert settings.siliconflow_api_key is None
@@ -80,3 +82,12 @@ def test_app_version_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_VERSION", "1.2.3")
     settings = Settings()
     assert settings.app_version == "1.2.3"
+
+
+def test_app_debug_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """APP_DEBUG 应从环境变量转换为布尔值。"""
+    monkeypatch.setenv("APP_DEBUG", "True")
+
+    settings = Settings()
+
+    assert settings.app_debug is True

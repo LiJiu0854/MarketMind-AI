@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     app_host: str = "127.0.0.1"
     app_port: int = 8010
     app_version: str = "0.1.0"
+    app_debug: bool = False
     log_level: str = "INFO"
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"

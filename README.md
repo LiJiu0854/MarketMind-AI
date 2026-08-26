@@ -27,7 +27,7 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 .venv\Scripts\mypy.exe backend tests
 ```
 
-任务 2 只建立测试工程入口，尚未创建测试用例，因此此时直接运行 pytest 会显示 `collected 0 items` 并返回退出码 5。任务 3 将先创建 Settings 的失败测试，再开始正式的红—绿 TDD 循环。
+阶段 0 的功能变更均遵循红—绿—重构循环：先观察聚焦测试因缺少目标行为而失败，再添加最小实现，最后运行完整质量检查。
 
 ## 启动 API
 
@@ -40,6 +40,7 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 启动后可以访问：
 
 - 存活检查：`http://127.0.0.1:8010/api/v1/health/live`
+- 就绪检查：`http://127.0.0.1:8010/api/v1/health/ready`
 - 接口文档：`http://127.0.0.1:8010/docs`
 - OpenAPI：`http://127.0.0.1:8010/openapi.json`
 
