@@ -192,7 +192,7 @@ MarketMind-AI/
 - [x] 复习常见故障排查方法并回答阶段面试口述题。
 - [x] 使用 `docs: complete phase 0 learning gate` 创建提交。
 - [x] 本地检查通过后，使用 `git push -u origin phase/0-foundation` 推送阶段分支。
-- [ ] 停止并等待本人明确验收；不得合并或创建标签。
+- [x] 已于 2026-08-26 收到本人明确验收；验收前未合并，也未创建标签。
 
 ## 阶段 0 完成门禁
 
