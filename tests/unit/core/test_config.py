@@ -14,10 +14,12 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "APP_PORT",
     "APP_DEBUG",
     "APP_VERSION",
+    "DATABASE_URL",
     "LOG_LEVEL",
     "SILICONFLOW_BASE_URL",
     "SILICONFLOW_MODEL",
     "SILICONFLOW_API_KEY",
+    "TEST_DATABASE_URL",
 )
 
 
@@ -91,3 +93,17 @@ def test_app_debug_override(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings()
 
     assert settings.app_debug is True
+
+
+def test_database_urls_are_secret_and_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """数据库连接串未受保护或测试库被意外默认配置时应失败。"""
+    database_url = "mysql+asyncmy://user:not-a-real-password@localhost/marketmind"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    settings = Settings()
+
+    assert isinstance(settings.database_url, SecretStr)
+    assert database_url not in repr(settings)
+    assert settings.test_database_url is None

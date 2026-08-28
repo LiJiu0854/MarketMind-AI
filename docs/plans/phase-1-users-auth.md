@@ -21,7 +21,8 @@
 - 不提供公开注册；第一个 Admin 由交互式 CLI 创建。
 - 删除用户表示停用，不执行物理删除。
 - JWT 只实现 30 分钟 Access Token；不实现 Refresh Token。
-- 每个 Task 开始前先讲学习目标；每个 Task 保留一个学习者亲手完成的练习。
+- 每个 Task 按“问题与数据流 → 必要语法 → RED 测试 → 学习者编写关键代码 → 逐段讲解 → GREEN → 迁移练习”推进；首次出现的核心代码必须从零解释，重复代码说明复用方法。
+- 每个 Task 必须同时通过“能看懂、会使用、能编写、会迁移”四层学习验收，不能只用口述概念题代替代码练习。
 - 每个 Task 结束前运行聚焦测试、完整 pytest、Ruff 和 mypy，并创建独立提交。
 
 ## 文件结构
@@ -103,13 +104,14 @@ tests/
 - `create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]`。
 - `database_url: SecretStr | None` 与 `test_database_url: SecretStr | None`。
 
-- [ ] **步骤 1：声明并安装 Task 1 数据库依赖**
+- [x] **步骤 1：声明并安装 Task 1 数据库依赖**
 
 在运行依赖中加入：
 
 ```toml
 "alembic>=1.16,<2.0",
 "asyncmy>=0.2,<1.0",
+"cryptography>=42,<47",
 "sqlalchemy[asyncio]>=2.0,<3.0",
 ```
 
@@ -119,7 +121,7 @@ tests/
 uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 ```
 
-- [ ] **步骤 2：为数据库配置编写 RED 测试**
+- [x] **步骤 2：为数据库配置编写 RED 测试**
 
 在配置隔离变量中加入 `DATABASE_URL` 和 `TEST_DATABASE_URL`，并新增：
 
@@ -141,7 +143,7 @@ def test_database_urls_are_secret_and_optional(monkeypatch: pytest.MonkeyPatch) 
 
 预期：因 `Settings` 没有 `database_url` 字段而失败。
 
-- [ ] **步骤 3：实现最小数据库配置并进入 GREEN**
+- [x] **步骤 3：实现最小数据库配置并进入 GREEN**
 
 在 `Settings` 中加入：
 
@@ -159,7 +161,7 @@ TEST_DATABASE_URL=
 
 重新运行步骤 2 的测试，预期通过。
 
-- [ ] **步骤 4：为 Engine 和 Session 工厂编写 RED 测试**
+- [x] **步骤 4：为 Engine 和 Session 工厂编写 RED 测试**
 
 创建 `tests/unit/db/test_session.py`：
 
@@ -183,7 +185,7 @@ async def test_create_database_resources() -> None:
 
 运行并确认因 `app.db.session` 不存在而失败。
 
-- [ ] **步骤 5：实现 Base、Engine 和 Session 工厂**
+- [x] **步骤 5：实现 Base、Engine 和 Session 工厂**
 
 `base.py`：
 
@@ -210,7 +212,7 @@ def create_session_factory(
 
 重新运行 `tests/unit/db/test_session.py`，预期通过；测试结束显式 `await engine.dispose()`，避免连接资源警告。
 
-- [ ] **步骤 6：为 User Model 编写 RED 测试**
+- [x] **步骤 6：为 User Model 编写 RED 测试**
 
 创建 `tests/unit/models/test_user.py`，断言：
 
@@ -232,7 +234,7 @@ def test_user_model_exposes_expected_table_contract() -> None:
 
 运行并确认因 `app.models.user` 不存在而失败。
 
-- [ ] **步骤 7：实现最小 User ORM Model**
+- [x] **步骤 7：实现最小 User ORM Model**
 
 使用 SQLAlchemy 2 `Mapped`/`mapped_column`，满足以下约束：
 
@@ -249,7 +251,7 @@ class User(Base):
 
 字段类型：自增整数主键、`VARCHAR(320)` 唯一邮箱、`VARCHAR(100)` 姓名、`VARCHAR(255)` 密码哈希、长度 20 的角色字符串约束、布尔启用状态、创建和更新时间。重新运行 Model 测试，预期通过。
 
-- [ ] **步骤 8：配置 Alembic 并创建初始迁移**
+- [x] **步骤 8：配置 Alembic 并创建初始迁移**
 
 执行：
 
@@ -273,13 +275,13 @@ target_metadata = Base.metadata
 
 人工检查 `upgrade()` 创建字段、唯一索引和角色约束，`downgrade()` 只删除 `users` 表。
 
-- [ ] **步骤 9：在真实测试库验证迁移与事务**
+- [x] **步骤 9：在真实测试库验证迁移与事务**
 
-只在当前 PowerShell 会话把 `DATABASE_URL` 指向 `marketmind_test`，运行：
+使用 Alembic 的显式测试库目标，运行：
 
 ```powershell
-.venv\Scripts\alembic.exe upgrade head
-.venv\Scripts\alembic.exe current
+.venv\Scripts\alembic.exe -x database=test upgrade head
+.venv\Scripts\alembic.exe -x database=test current
 ```
 
 创建数据库集成测试：打开连接和外层事务，创建绑定连接的 `AsyncSession`，插入一个测试用户后 `flush()`，查询确认存在，最后回滚外层事务并再次查询确认数据不存在。
@@ -290,7 +292,7 @@ target_metadata = Base.metadata
 .venv\Scripts\python.exe -m pytest tests\integration\db -v
 ```
 
-- [ ] **步骤 10：本人练习与学习门禁**
+- [x] **步骤 10：本人练习与学习门禁**
 
 学习者亲手完成：在测试库上依次运行 `alembic current`、`alembic history`，并阅读初始迁移的 `upgrade()`/`downgrade()`，用自己的话解释：
 
@@ -299,7 +301,7 @@ target_metadata = Base.metadata
 3. 为什么测试必须使用 `marketmind_test`；
 4. 外层事务回滚如何防止测试数据污染。
 
-- [ ] **步骤 11：Task 1 完整验证并提交**
+- [x] **步骤 11：Task 1 完整验证并提交**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q

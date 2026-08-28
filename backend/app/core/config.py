@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     app_debug: bool = False
     log_level: str = "INFO"
+    database_url: SecretStr | None = None
+    test_database_url: SecretStr | None = None
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     siliconflow_api_key: SecretStr | None = None
