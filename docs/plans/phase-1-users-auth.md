@@ -429,6 +429,7 @@ feat: add MySQL persistence foundation
 - 创建：`tests/api/test_users.py`
 - 创建：`tests/api/test_errors.py`
 - 修改：`docs/learning/phase-1-users-auth.md`
+- 创建：`docs/learning/phase-1-task-4-rbac-users-api.md`
 - 修改：`docs/plans/phase-1-users-auth.md`
 
 **接口：** `require_roles(*allowed_roles: Role)` 返回一个异步 FastAPI 依赖；该依赖接收 `get_current_user()` 的 `User`，允许角色时返回该用户，否则抛出 `PERMISSION_DENIED`。
@@ -443,17 +444,17 @@ PATCH  /api/v1/users/{user_id}
 DELETE /api/v1/users/{user_id}
 ```
 
-- [ ] 先写 RBAC RED：Admin 成功，Operator/Analyst 返回 403，无 Token 返回 401。
-- [ ] 实现 `require_roles(Role.ADMIN)` 依赖并一次性保护整个 users router。
-- [ ] 注册用户管理路由，连接 Task 2 的 Service；`DELETE` 只设置 `is_active=False`。
-- [ ] 先写统一错误 RED，精确断言 `code`、`message`、`request_id` 和 HTTP 状态。
-- [ ] 注册 `AppError`、请求校验异常和数据库不可用异常处理器；不得返回 SQL 或连接串。
-- [ ] API 测试覆盖创建、重复邮箱、列表分页、读取、更新、停用、重新启用、自停用拒绝和密码哈希不泄露。
-- [ ] 在数据库调用边界模拟连接异常，验证 503；正常路径仍使用真实 MySQL。
-- [ ] 本人练习：亲手编写 Analyst 访问用户列表返回 403 的测试，再亲手把一个练习接口从 Admin-only 改为 `Admin | Analyst` 并解释适用场景。
-- [ ] 手工验收：Alembic 升级、CLI 创建 Admin、登录、Swagger 授权、创建 Operator、验证越权与停用。
-- [ ] 口述验收：Model/Schema、Session/Transaction、迁移、哈希/JWT、401/403、RBAC、测试回滚和数据库故障。
-- [ ] 运行完整质量门禁并提交：`docs: complete phase 1 learning gate`。
+- [x] 先写 RBAC RED：Admin 成功，Operator/Analyst 返回 403，无 Token 返回 401。
+- [x] 实现 `require_roles(Role.ADMIN)` 依赖并一次性保护整个 users router。
+- [x] 注册用户管理路由，连接 Task 2 的 Service；`DELETE` 只设置 `is_active=False`。
+- [x] 先写统一错误 RED，精确断言 `code`、`message`、`request_id` 和 HTTP 状态。
+- [x] 注册 `AppError`、请求校验异常和数据库不可用异常处理器；不得返回 SQL 或连接串。
+- [x] API 测试覆盖创建、重复邮箱、列表分页、读取、更新、停用、重新启用、自停用拒绝和密码哈希不泄露。
+- [x] 在数据库调用边界模拟连接异常，验证 503；正常路径仍使用真实 MySQL。
+- [x] 本人练习：亲手实现支持一个或多个 `Role` 的 `require_roles()`，并通过 Admin、Operator、Analyst 角色测试与真实 API 越权测试。
+- [x] 手工验收：Alembic 升级、CLI 创建 Admin、登录、Swagger 授权、创建 Operator、验证越权与停用。
+- [x] 口述验收：Model/Schema、Session/Transaction、迁移、哈希/JWT、401/403、RBAC、测试回滚和数据库故障。
+- [x] 运行完整质量门禁并提交：`feat: complete phase 1 users and authorization`。
 - [ ] 推送 `phase/1-users-auth`，等待本人明确验收；不得自动合并 `main` 或创建标签。
 
 ## 阶段 1 完成门禁

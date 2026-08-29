@@ -1,6 +1,6 @@
 """FastAPI 数据库会话与当前用户依赖。"""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import cache
 from typing import Annotated
 
@@ -13,7 +13,7 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import decode_access_token
 from app.db.session import create_engine, create_session_factory
-from app.models.user import User
+from app.models.user import Role, User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
@@ -70,3 +70,20 @@ async def get_current_user(
         )
 
     return user
+
+
+def require_roles(*allowed_roles: Role) -> Callable[[User], Awaitable[User]]:
+    """创建只允许指定角色通过的 FastAPI 依赖。"""
+
+    async def check_role(
+        current_user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
+        if current_user.role not in allowed_roles:
+            raise AppError(
+                code="PERMISSION_DENIED",
+                message="权限不足",
+                status_code=403,
+            )
+        return current_user
+
+    return check_role
