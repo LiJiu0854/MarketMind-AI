@@ -1,42 +1,20 @@
 """用户 Service 的真实 MySQL 集成测试。"""
 
-from collections.abc import AsyncIterator
-
 import pytest
-import pytest_asyncio
-from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.core.security import verify_password
-from app.models.user import Role, User
+from app.models.user import Role
 from app.schemas.user import UserCreate, UserUpdate
 from app.services.users import (
+    authenticate_user,
     create_user,
     deactivate_user,
     get_user,
     list_users,
     update_user,
 )
-
-
-@pytest_asyncio.fixture
-async def session(test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
-    """在外层事务中提供可提交的隔离 Session。"""
-    async with test_engine.connect() as connection:
-        transaction = await connection.begin()
-        await connection.execute(delete(User))
-        db_session = AsyncSession(
-            bind=connection,
-            expire_on_commit=False,
-            join_transaction_mode="create_savepoint",
-        )
-        try:
-            yield db_session
-        finally:
-            await db_session.close()
-            if transaction.is_active:
-                await transaction.rollback()
 
 
 def user_data(index: int, *, role: Role = Role.ANALYST) -> UserCreate:
@@ -62,6 +40,66 @@ async def test_create_user_normalizes_email_and_hashes_password(
     assert user.email == "user-1@example.com"
     assert user.password_hash != data.password
     assert verify_password(data.password, user.password_hash)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_user_accepts_normalized_email_and_correct_password(
+    session: AsyncSession,
+) -> None:
+    """登录邮箱应复用规范化规则，正确密码返回数据库用户。"""
+    created = await create_user(session, user_data(1))
+
+    authenticated = await authenticate_user(
+        session,
+        email="  USER-1@EXAMPLE.COM  ",
+        password="correct-horse-battery-staple",
+    )
+
+    assert authenticated is created
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("email", "password"),
+    [
+        ("missing@example.com", "wrong-password"),
+        ("user-1@example.com", "wrong-password"),
+    ],
+)
+async def test_authenticate_user_hides_which_credential_is_wrong(
+    session: AsyncSession,
+    email: str,
+    password: str,
+) -> None:
+    """邮箱不存在和密码错误必须产生完全相同的认证失败。"""
+    await create_user(session, user_data(1))
+
+    with pytest.raises(AppError) as exc_info:
+        await authenticate_user(session, email=email, password=password)
+
+    assert exc_info.value.code == "AUTH_INVALID_CREDENTIALS"
+    assert exc_info.value.message == "邮箱或密码错误"
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_authenticate_user_rejects_inactive_account(
+    session: AsyncSession,
+) -> None:
+    """密码正确但已停用的账号不能登录。"""
+    user = await create_user(session, user_data(1))
+    user.is_active = False
+    await session.commit()
+
+    with pytest.raises(AppError) as exc_info:
+        await authenticate_user(
+            session,
+            email=user.email,
+            password="correct-horse-battery-staple",
+        )
+
+    assert exc_info.value.code == "ACCOUNT_INACTIVE"
+    assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio

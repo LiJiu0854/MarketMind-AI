@@ -16,6 +16,8 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "APP_VERSION",
     "DATABASE_URL",
     "LOG_LEVEL",
+    "JWT_SECRET",
+    "ACCESS_TOKEN_EXPIRE_MINUTES",
     "SILICONFLOW_BASE_URL",
     "SILICONFLOW_MODEL",
     "SILICONFLOW_API_KEY",
@@ -107,3 +109,25 @@ def test_database_urls_are_secret_and_optional(
     assert isinstance(settings.database_url, SecretStr)
     assert database_url not in repr(settings)
     assert settings.test_database_url is None
+
+
+def test_jwt_settings_have_safe_defaults() -> None:
+    """JWT 密钥不能有不安全默认值，Token 有效期应默认为 30 分钟。"""
+    settings = Settings()
+
+    assert settings.jwt_secret is None
+    assert settings.access_token_expire_minutes == 30
+
+
+def test_jwt_secret_is_loaded_without_leaking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JWT 密钥应使用 SecretStr，并且不能出现在调试输出中。"""
+    secret = "unit-test-jwt-secret"
+    monkeypatch.setenv("JWT_SECRET", secret)
+
+    settings = Settings()
+
+    assert isinstance(settings.jwt_secret, SecretStr)
+    assert settings.jwt_secret.get_secret_value() == secret
+    assert secret not in repr(settings)

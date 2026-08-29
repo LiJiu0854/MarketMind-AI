@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     database_url: SecretStr | None = None
     test_database_url: SecretStr | None = None
+    jwt_secret: SecretStr | None = None
+    access_token_expire_minutes: int = 30
+
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     siliconflow_api_key: SecretStr | None = None

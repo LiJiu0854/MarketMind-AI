@@ -388,6 +388,7 @@ feat: add MySQL persistence foundation
 - 修改：`backend/app/main.py`
 - 创建：`tests/api/test_auth.py`
 - 扩展：`tests/unit/core/test_security.py`
+- 创建：`docs/learning/phase-1-task-3-jwt-auth.md`
 
 **接口：**
 
@@ -396,15 +397,15 @@ feat: add MySQL persistence foundation
 - `authenticate_user(session: AsyncSession, email: str, password: str) -> User`
 - `get_current_user(token: str, session: AsyncSession) -> User`
 
-- [ ] 添加 `PyJWT` 与 `python-multipart`；配置 `jwt_secret: SecretStr | None` 和 `access_token_expire_minutes: int = 30`。
-- [ ] 先写 JWT RED：Token 包含字符串 `sub`、过期 Token 被拒绝、篡改签名被拒绝、密钥不出现在 repr。
-- [ ] 使用固定算法白名单实现 JWT 创建和解析，不从 Token Header 动态选择算法。
-- [ ] 先写登录 API RED：正确凭证返回 Bearer Token，错误邮箱和错误密码返回相同 401，响应带 `WWW-Authenticate: Bearer`。
-- [ ] 实现 `authenticate_user()`；用户不存在时执行虚拟密码校验，停用用户不签发 Token。
-- [ ] 实现 `OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")`、`get_current_user()` 和 `/auth/me`，并在应用工厂注册 auth router。
-- [ ] API 测试使用真实 MySQL 会话依赖覆盖；验证无 Token、过期 Token、停用用户和有效用户。
-- [ ] 本人练习：亲手添加“Token 的用户 ID 不存在”测试，并让依赖返回 401；解释为何 Token 签名正确仍可能无效。
-- [ ] 运行完整质量门禁并提交：`feat: add JWT authentication`。
+- [x] 添加 `PyJWT` 与 `python-multipart`；配置 `jwt_secret: SecretStr | None` 和 `access_token_expire_minutes: int = 30`。
+- [x] 先写 JWT RED：Token 包含字符串 `sub`、过期 Token 被拒绝、篡改签名被拒绝、密钥不出现在 repr。
+- [x] 使用固定算法白名单实现 JWT 创建和解析，不从 Token Header 动态选择算法。
+- [x] 先写登录 API RED：正确凭证返回 Bearer Token，错误邮箱和错误密码返回相同 401，响应带 `WWW-Authenticate: Bearer`。
+- [x] 实现 `authenticate_user()`；用户不存在时执行虚拟密码校验，停用用户不签发 Token。
+- [x] 实现 `OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")`、`get_current_user()` 和 `/auth/me`，并在应用工厂注册 auth router。
+- [x] API 测试使用真实 MySQL 会话依赖覆盖；验证无 Token、过期 Token、停用用户和有效用户。
+- [x] 本人练习：实现当前用户依赖，并通过“Token 用户不存在返回 401”的真实 MySQL 测试；解释为何 Token 签名正确仍可能无效。
+- [x] 运行完整质量门禁并提交：`feat: add JWT authentication`。
 
 ---
 

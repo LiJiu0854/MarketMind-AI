@@ -1,6 +1,15 @@
-"""密码安全函数测试。"""
+"""密码与 JWT 安全函数测试。"""
 
-from app.core.security import hash_password, verify_password
+import pytest
+from jwt import ExpiredSignatureError, InvalidSignatureError, decode
+from pydantic import SecretStr
+
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+)
 
 
 def test_hash_password_returns_salted_hash() -> None:
@@ -29,3 +38,39 @@ def test_verify_password_rejects_wrong_password() -> None:
     password_hash = hash_password("correct-horse-battery-staple")
 
     assert verify_password("wrong-password", password_hash) is False
+
+
+def test_access_token_contains_string_subject_and_round_trips() -> None:
+    """Token 的 sub 应为字符串，并能还原为整数用户 ID。"""
+    secret = SecretStr("unit-test-jwt-secret-with-32-bytes")
+
+    token = create_access_token(user_id=42, secret=secret, expires_minutes=30)
+    payload = decode(
+        token,
+        secret.get_secret_value(),
+        algorithms=["HS256"],
+    )
+
+    assert payload["sub"] == "42"
+    assert decode_access_token(token, secret) == 42
+
+
+def test_decode_access_token_rejects_expired_token() -> None:
+    """过期 Token 不能还原用户身份。"""
+    secret = SecretStr("unit-test-jwt-secret-with-32-bytes")
+    token = create_access_token(user_id=42, secret=secret, expires_minutes=-1)
+
+    with pytest.raises(ExpiredSignatureError):
+        decode_access_token(token, secret)
+
+
+def test_decode_access_token_rejects_tampered_signature() -> None:
+    """签名被修改后，即使载荷可读也必须拒绝。"""
+    secret = SecretStr("unit-test-jwt-secret-with-32-bytes")
+    token = create_access_token(user_id=42, secret=secret, expires_minutes=30)
+    header, payload, signature = token.split(".")
+    replacement = "A" if signature[0] != "A" else "B"
+    tampered = f"{header}.{payload}.{replacement}{signature[1:]}"
+
+    with pytest.raises(InvalidSignatureError):
+        decode_access_token(tampered, secret)

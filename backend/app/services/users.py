@@ -5,9 +5,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.models.user import User
 from app.schemas.user import UserCreate, UserPage, UserRead, UserUpdate
+
+DUMMY_PASSWORD_HASH = hash_password("dummy-password-for-timing-protection")
 
 
 def _normalize_email(email: str) -> str:
@@ -22,6 +24,37 @@ def _email_conflict() -> AppError:
         message="用户邮箱已存在",
         status_code=409,
     )
+
+
+async def authenticate_user(
+    session: AsyncSession, email: str, password: str
+) -> User:
+    """验证邮箱、密码和账号状态，成功时返回用户。"""
+    normalized = _normalize_email(email)
+    stmt = select(User).where(User.email == normalized)
+    user = await session.scalar(stmt)
+    if user is None:
+        verify_password(password, DUMMY_PASSWORD_HASH)
+        raise AppError(
+            code="AUTH_INVALID_CREDENTIALS",
+            message="邮箱或密码错误",
+            status_code=401,
+        )
+
+    if not verify_password(password, user.password_hash):
+        raise AppError(
+            code="AUTH_INVALID_CREDENTIALS",
+            message="邮箱或密码错误",
+            status_code=401,
+        )
+
+    if not user.is_active:
+        raise AppError(
+            code="ACCOUNT_INACTIVE",
+            message="账号已停用",
+            status_code=403,
+        )
+    return user
 
 
 async def create_user(session: AsyncSession, data: UserCreate) -> User:
