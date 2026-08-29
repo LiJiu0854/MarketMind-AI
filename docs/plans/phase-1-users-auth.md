@@ -341,6 +341,7 @@ feat: add MySQL persistence foundation
 - 创建：`tests/unit/core/test_security.py`
 - 创建：`tests/unit/services/test_users.py`
 - 创建：`tests/integration/db/test_user_service.py`
+- 创建：`docs/learning/phase-1-task-2-user-service.md`
 
 **接口：**
 
