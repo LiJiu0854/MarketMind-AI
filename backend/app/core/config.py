@@ -1,6 +1,6 @@
 """类型化应用配置。"""
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     test_database_url: SecretStr | None = None
     jwt_secret: SecretStr | None = None
     access_token_expire_minutes: int = 30
-
+    redis_url: SecretStr | None = None
+    test_redis_url: SecretStr | None = None
+    redis_cache_ttl_seconds: int = Field(default=60, gt=0)
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     siliconflow_api_key: SecretStr | None = None

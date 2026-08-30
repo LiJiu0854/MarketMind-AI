@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from app.core.config import Settings
 
@@ -22,6 +22,9 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "SILICONFLOW_MODEL",
     "SILICONFLOW_API_KEY",
     "TEST_DATABASE_URL",
+    "REDIS_URL",
+    "TEST_REDIS_URL",
+    "REDIS_CACHE_TTL_SECONDS",
 )
 
 
@@ -131,3 +134,38 @@ def test_jwt_secret_is_loaded_without_leaking(
     assert isinstance(settings.jwt_secret, SecretStr)
     assert settings.jwt_secret.get_secret_value() == secret
     assert secret not in repr(settings)
+
+
+def test_redis_settings_have_safe_defaults() -> None:
+    """Redis 不能包含秘密默认连接串，缓存 TTL 必须为正数。"""
+    settings = Settings()
+
+    assert settings.redis_url is None
+    assert settings.test_redis_url is None
+    assert settings.redis_cache_ttl_seconds == 60
+
+
+def test_redis_settings_read_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Redis URL 应受保护，缓存 TTL 应从环境变量转换为整数。"""
+    redis_url = "redis://:test-password@127.0.0.1:6379/0"
+    monkeypatch.setenv("REDIS_URL", redis_url)
+    monkeypatch.setenv("REDIS_CACHE_TTL_SECONDS", "120")
+
+    settings = Settings()
+
+    assert isinstance(settings.redis_url, SecretStr)
+    assert settings.redis_url.get_secret_value() == redis_url
+    assert redis_url not in repr(settings)
+    assert settings.redis_cache_ttl_seconds == 120
+
+
+def test_redis_cache_ttl_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """零或负数 TTL 会让缓存策略失去明确边界。"""
+    monkeypatch.setenv("REDIS_CACHE_TTL_SECONDS", "0")
+
+    with pytest.raises(ValidationError):
+        Settings()
