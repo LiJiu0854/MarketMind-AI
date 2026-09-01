@@ -1,6 +1,7 @@
 """Admin 用户管理 API 测试。"""
 
 from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db_session
 from app.core.security import create_access_token
+from app.db.redis import get_redis
 from app.main import create_app
 from app.models.user import Role, User
 from app.schemas.user import UserCreate
@@ -24,14 +26,26 @@ def jwt_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JWT_SECRET", JWT_SECRET)
 
 
+@pytest.fixture
+def redis_client() -> AsyncMock:
+    client = AsyncMock()
+    client.get.return_value = None
+    return client
+
+
 @pytest_asyncio.fixture
-async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+async def client(
+    session: AsyncSession,
+    redis_client: AsyncMock,
+) -> AsyncIterator[AsyncClient]:
     app = create_app()
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield session
 
     app.dependency_overrides[get_db_session] = override_session
+    app.dependency_overrides[get_redis] = lambda: redis_client
+
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as value:
         yield value
@@ -153,7 +167,10 @@ class TestAdminUserWrites:
 
     @pytest.mark.asyncio
     async def test_admin_partially_updates_user(
-        self, client: AsyncClient, session: AsyncSession
+        self,
+        client: AsyncClient,
+        session: AsyncSession,
+        redis_client: AsyncMock,
     ) -> None:
         admin = await make_user(session, 1, Role.ADMIN)
         target = await make_user(session, 2, Role.ANALYST)
@@ -167,6 +184,9 @@ class TestAdminUserWrites:
         assert response.status_code == 200
         assert response.json()["full_name"] == "Updated User"
         assert response.json()["role"] == "operator"
+        redis_client.delete.assert_awaited_once_with(
+            f"marketmind:user:v1:{target.id}"
+        )
 
     @pytest.mark.asyncio
     async def test_admin_reactivates_user(
@@ -188,7 +208,10 @@ class TestAdminUserWrites:
 
     @pytest.mark.asyncio
     async def test_admin_soft_deletes_user(
-        self, client: AsyncClient, session: AsyncSession
+        self,
+        client: AsyncClient,
+        session: AsyncSession,
+        redis_client: AsyncMock,
     ) -> None:
         admin = await make_user(session, 1, Role.ADMIN)
         target = await make_user(session, 2, Role.ANALYST)
@@ -200,6 +223,9 @@ class TestAdminUserWrites:
         assert response.status_code == 200
         assert response.json()["is_active"] is False
         assert await session.get(User, target.id) is target
+        redis_client.delete.assert_awaited_once_with(
+            f"marketmind:user:v1:{target.id}"
+        )
 
     @pytest.mark.asyncio
     async def test_admin_cannot_deactivate_self(
