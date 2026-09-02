@@ -30,6 +30,10 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "LOGIN_RATE_LIMIT",
     "LOGIN_RATE_WINDOW_SECONDS",
     "REDIS_LOCK_TTL_MS",
+    "CELERY_BROKER_URL",
+    "CELERY_RESULT_BACKEND",
+    "CELERY_TASK_ALWAYS_EAGER",
+    "CELERY_RESULT_EXPIRES_SECONDS",
 )
 
 
@@ -202,3 +206,41 @@ def test_redis_guard_settings_read_environment(
     assert settings.login_rate_limit == 8
     assert settings.login_rate_window_seconds == 90
     assert settings.redis_lock_ttl_ms == 15_000
+
+
+def test_celery_settings_have_safe_defaults() -> None:
+    settings = Settings()
+
+    assert settings.celery_broker_url is None
+    assert settings.celery_result_backend is None
+    assert settings.celery_task_always_eager is False
+    assert settings.celery_result_expires_seconds == 3_600
+
+
+def test_celery_settings_read_environment_without_leaking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broker = "redis://:broker-secret@127.0.0.1:6379/1"
+    backend = "redis://:backend-secret@127.0.0.1:6379/2"
+    monkeypatch.setenv("CELERY_BROKER_URL", broker)
+    monkeypatch.setenv("CELERY_RESULT_BACKEND", backend)
+    monkeypatch.setenv("CELERY_TASK_ALWAYS_EAGER", "true")
+    monkeypatch.setenv("CELERY_RESULT_EXPIRES_SECONDS", "1800")
+
+    settings = Settings()
+
+    assert settings.celery_broker_url == SecretStr(broker)
+    assert settings.celery_result_backend == SecretStr(backend)
+    assert settings.celery_task_always_eager is True
+    assert settings.celery_result_expires_seconds == 1_800
+    assert "broker-secret" not in repr(settings)
+    assert "backend-secret" not in repr(settings)
+
+
+def test_celery_result_expiry_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CELERY_RESULT_EXPIRES_SECONDS", "0")
+
+    with pytest.raises(ValidationError):
+        Settings()

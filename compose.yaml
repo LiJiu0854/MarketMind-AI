@@ -19,5 +19,20 @@ services:
       timeout: 3s
       retries: 10
 
+  celery-worker:
+    build:
+      context: .
+    container_name: marketmind-celery-worker
+    restart: unless-stopped
+    command: celery -A app.celery_app:celery_app worker --loglevel=INFO
+    environment:
+      DATABASE_URL: ${WORKER_DATABASE_URL:?必须设置}
+      REDIS_URL: ${WORKER_REDIS_URL:?必须设置}
+      CELERY_BROKER_URL: ${WORKER_CELERY_BROKER_URL:?必须设置}
+      CELERY_RESULT_BACKEND: ${WORKER_CELERY_RESULT_BACKEND:?必须设置}
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   redis_data:

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     login_rate_limit: int = Field(default=5, gt=0)
     login_rate_window_seconds: int = Field(default=60, gt=0)
     redis_lock_ttl_ms: int = Field(default=30_000, gt=0)
+    celery_broker_url: SecretStr | None = None
+    celery_result_backend: SecretStr | None = None
+    celery_task_always_eager: bool = False
+    celery_result_expires_seconds: int = Field(default=3_600, gt=0)
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     siliconflow_api_key: SecretStr | None = None
