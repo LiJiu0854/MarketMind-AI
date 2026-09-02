@@ -1,15 +1,18 @@
 """登录与当前用户 API 测试。"""
 
 from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db_session
 from app.core.security import create_access_token
+from app.db.redis import get_redis
 from app.main import create_app
 from app.models.user import Role, User
 from app.schemas.user import UserCreate
@@ -24,8 +27,18 @@ def auth_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JWT_SECRET", JWT_SECRET)
 
 
+@pytest.fixture
+def redis_client() -> AsyncMock:
+    client = AsyncMock()
+    client.eval.return_value = [1, 60]
+    return client
+
+
 @pytest_asyncio.fixture
-async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+async def client(
+    session: AsyncSession,
+    redis_client: AsyncMock,
+) -> AsyncIterator[AsyncClient]:
     """覆盖生产 Session 依赖，所有请求只访问测试库。"""
     app = create_app()
 
@@ -33,6 +46,7 @@ async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
         yield session
 
     app.dependency_overrides[get_db_session] = override_session
+    app.dependency_overrides[get_redis] = lambda: redis_client
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as api_client:
         yield api_client
@@ -119,6 +133,39 @@ async def test_login_rejects_inactive_account(
 
     assert response.status_code == 403
     assert response.json()["code"] == "ACCOUNT_INACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limit_returns_retry_after(
+    client: AsyncClient,
+    redis_client: AsyncMock,
+) -> None:
+    redis_client.eval.return_value = [6, 42]
+
+    response = await client.post(
+        "/api/v1/auth/token",
+        data={"username": "login@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == "42"
+    assert response.json()["code"] == "LOGIN_RATE_LIMITED"
+
+
+@pytest.mark.asyncio
+async def test_login_rejects_when_rate_limit_redis_is_unavailable(
+    client: AsyncClient,
+    redis_client: AsyncMock,
+) -> None:
+    redis_client.eval.side_effect = RedisError("down")
+
+    response = await client.post(
+        "/api/v1/auth/token",
+        data={"username": "login@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "RATE_LIMIT_UNAVAILABLE"
 
 
 @pytest.mark.asyncio

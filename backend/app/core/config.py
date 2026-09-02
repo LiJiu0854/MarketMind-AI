@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     redis_url: SecretStr | None = None
     test_redis_url: SecretStr | None = None
     redis_cache_ttl_seconds: int = Field(default=60, gt=0)
+    idempotency_processing_ttl_seconds: int = Field(default=30, gt=0)
+    idempotency_result_ttl_seconds: int = Field(default=86_400, gt=0)
+    login_rate_limit: int = Field(default=5, gt=0)
+    login_rate_window_seconds: int = Field(default=60, gt=0)
+    redis_lock_ttl_ms: int = Field(default=30_000, gt=0)
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     siliconflow_api_key: SecretStr | None = None

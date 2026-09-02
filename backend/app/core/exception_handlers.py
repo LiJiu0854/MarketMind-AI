@@ -10,7 +10,10 @@ from app.core.errors import AppError
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     """把业务异常转换为不泄露内部信息的 JSON 响应。"""
-    headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+    headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else {}
+    if exc.headers:
+        headers.update(exc.headers)
+
     return JSONResponse(
         status_code=exc.status_code,
         content={

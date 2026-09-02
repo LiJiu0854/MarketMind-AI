@@ -25,6 +25,11 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "REDIS_URL",
     "TEST_REDIS_URL",
     "REDIS_CACHE_TTL_SECONDS",
+    "IDEMPOTENCY_PROCESSING_TTL_SECONDS",
+    "IDEMPOTENCY_RESULT_TTL_SECONDS",
+    "LOGIN_RATE_LIMIT",
+    "LOGIN_RATE_WINDOW_SECONDS",
+    "REDIS_LOCK_TTL_MS",
 )
 
 
@@ -169,3 +174,31 @@ def test_redis_cache_ttl_must_be_positive(
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_redis_guard_settings_have_safe_defaults() -> None:
+    settings = Settings()
+
+    assert settings.idempotency_processing_ttl_seconds == 30
+    assert settings.idempotency_result_ttl_seconds == 86_400
+    assert settings.login_rate_limit == 5
+    assert settings.login_rate_window_seconds == 60
+    assert settings.redis_lock_ttl_ms == 30_000
+
+
+def test_redis_guard_settings_read_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IDEMPOTENCY_PROCESSING_TTL_SECONDS", "45")
+    monkeypatch.setenv("IDEMPOTENCY_RESULT_TTL_SECONDS", "7200")
+    monkeypatch.setenv("LOGIN_RATE_LIMIT", "8")
+    monkeypatch.setenv("LOGIN_RATE_WINDOW_SECONDS", "90")
+    monkeypatch.setenv("REDIS_LOCK_TTL_MS", "15000")
+
+    settings = Settings()
+
+    assert settings.idempotency_processing_ttl_seconds == 45
+    assert settings.idempotency_result_ttl_seconds == 7200
+    assert settings.login_rate_limit == 8
+    assert settings.login_rate_window_seconds == 90
+    assert settings.redis_lock_ttl_ms == 15_000

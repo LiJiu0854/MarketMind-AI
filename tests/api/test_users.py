@@ -1,5 +1,6 @@
 """Admin 用户管理 API 测试。"""
 
+import json
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock
 
@@ -7,15 +8,17 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.api.v1.users as users_api
 from app.api.dependencies import get_db_session
 from app.core.security import create_access_token
 from app.db.redis import get_redis
 from app.main import create_app
 from app.models.user import Role, User
 from app.schemas.user import UserCreate
-from app.services.users import create_user
+from app.services.users import create_user, list_users
 
 JWT_SECRET = "unit-test-jwt-secret-with-32-bytes"
 PASSWORD = "correct-horse-battery-staple"
@@ -30,6 +33,8 @@ def jwt_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 def redis_client() -> AsyncMock:
     client = AsyncMock()
     client.get.return_value = None
+    client.set.return_value = True
+    client.eval.return_value = 1
     return client
 
 
@@ -79,7 +84,10 @@ class TestAdminUserReads:
 
         response = await client.post(
             "/api/v1/users",
-            headers=auth_headers(admin),
+            headers={
+                **auth_headers(admin),
+                "Idempotency-Key": "create-safe-user",
+            },
             json={
                 "email": "NEW@EXAMPLE.COM",
                 "full_name": "New User",
@@ -143,7 +151,10 @@ class TestAdminUserReads:
 
         response = await client.post(
             "/api/v1/users",
-            headers=auth_headers(admin),
+            headers={
+                **auth_headers(admin),
+                "Idempotency-Key": "create-duplicate-user",
+            },
             json={
                 "email": "USER-2@EXAMPLE.COM",
                 "full_name": "Duplicate User",
@@ -154,6 +165,80 @@ class TestAdminUserReads:
 
         assert response.status_code == 409
         assert response.json()["code"] == "USER_EMAIL_CONFLICT"
+
+    @pytest.mark.asyncio
+    async def test_create_user_requires_idempotency_key(
+        self,
+        client: AsyncClient,
+        session: AsyncSession,
+    ) -> None:
+        admin = await make_user(session, 1, Role.ADMIN)
+
+        response = await client.post(
+            "/api/v1/users",
+            headers=auth_headers(admin),
+            json={
+                "email": "new@example.com",
+                "full_name": "New User",
+                "password": PASSWORD,
+                "role": "analyst",
+            },
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_same_idempotent_request_replays_without_second_insert(
+        self,
+        client: AsyncClient,
+        session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        admin = await make_user(session, 1, Role.ADMIN)
+        begin = AsyncMock(return_value=None)
+        complete = AsyncMock()
+        monkeypatch.setattr(users_api, "begin_idempotent_request", begin)
+        monkeypatch.setattr(users_api, "complete_idempotent_request", complete)
+        headers = {**auth_headers(admin), "Idempotency-Key": "same-request-key"}
+        payload = {
+            "email": "new@example.com",
+            "full_name": "New User",
+            "password": PASSWORD,
+            "role": "analyst",
+        }
+
+        first = await client.post("/api/v1/users", headers=headers, json=payload)
+        begin.return_value = json.dumps(first.json())
+        second = await client.post("/api/v1/users", headers=headers, json=payload)
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert second.json() == first.json()
+        assert (await list_users(session, 1, 100)).total == 2
+
+    @pytest.mark.asyncio
+    async def test_create_user_rejects_when_idempotency_redis_is_unavailable(
+        self,
+        client: AsyncClient,
+        session: AsyncSession,
+        redis_client: AsyncMock,
+    ) -> None:
+        admin = await make_user(session, 1, Role.ADMIN)
+        redis_client.set.side_effect = RedisError("down")
+
+        response = await client.post(
+            "/api/v1/users",
+            headers={**auth_headers(admin), "Idempotency-Key": "redis-down-key"},
+            json={
+                "email": "new@example.com",
+                "full_name": "New User",
+                "password": PASSWORD,
+                "role": "analyst",
+            },
+        )
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "IDEMPOTENCY_UNAVAILABLE"
 
     @pytest.mark.asyncio
     async def test_users_requires_authentication(self, client: AsyncClient) -> None:

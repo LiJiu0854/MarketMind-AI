@@ -1,17 +1,20 @@
 """登录与当前用户 API。"""
 
-from typing import Annotated
+from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.security import OAuth2PasswordRequestForm
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session
 from app.core.config import Settings
 from app.core.security import create_access_token
+from app.db.redis import get_redis
 from app.models.user import User
 from app.schemas.auth import TokenResponse
 from app.schemas.user import UserRead
+from app.services.redis_guards import enforce_login_rate_limit
 from app.services.users import authenticate_user
 
 router = APIRouter(prefix="/auth", tags=["认证"])
@@ -19,21 +22,33 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 
 @router.post("/token", response_model=TokenResponse, summary="账号登录")
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: Annotated[AsyncSession, Depends(get_db_session)],
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> TokenResponse:
     """验证邮箱和密码并签发 Access Token。"""
-    settings = Settings()
-    secret = settings.jwt_secret
 
-    if secret is None:
-        raise RuntimeError("JWT_SECRET 未配置")
+    client_ip = request.client.host if request.client else "unknown"
+    identity = f"{client_ip}|{form_data.username.strip().lower()}"
+    settings = cast(Settings, request.app.state.settings)
+
+    await enforce_login_rate_limit(
+        redis,
+        identity,
+        settings.login_rate_limit,
+        settings.login_rate_window_seconds,
+    )
 
     user = await authenticate_user(
         session,
         email=form_data.username,
         password=form_data.password,
     )
+
+    secret = settings.jwt_secret
+    if secret is None:
+        raise RuntimeError("JWT_SECRET 未配置")
 
     token = create_access_token(
         user_id=user.id,
@@ -42,6 +57,7 @@ async def login(
     )
 
     return TokenResponse(access_token=token, token_type="bearer")
+
 
 @router.get("/me", response_model=UserRead, summary="读取当前用户")
 async def read_current_user(
