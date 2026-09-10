@@ -92,3 +92,14 @@ class ProductFilters(BaseModel):
     is_active: bool | None = None
 
     normalize_sku = field_validator("sku", mode="before")(_normalize_upper)
+
+
+class ProductImportError(BaseModel):
+    """一个 Excel 数据行的稳定错误。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    row: int = Field(ge=2)
+    field: str
+    code: str
+    message: str
