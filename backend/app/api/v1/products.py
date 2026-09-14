@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db_session, require_roles
@@ -11,9 +11,15 @@ from app.models.user import Role, User
 from app.schemas.product import (
     ProductCreate,
     ProductFilters,
+    ProductImportResult,
     ProductPage,
     ProductRead,
     ProductUpdate,
+)
+from app.services.product_excel import (
+    MAX_XLSX_BYTES,
+    parse_product_workbook,
+    validate_xlsx_upload,
 )
 from app.services.products import (
     create_product as create_product_service,
@@ -21,6 +27,7 @@ from app.services.products import (
 from app.services.products import (
     deactivate_product,
     get_product,
+    import_products,
     list_products,
     update_product,
 )
@@ -65,6 +72,19 @@ async def read_products(
         is_active=is_active,
     )
     return await list_products(session, filters, page, page_size)
+
+
+@router.post("/import", response_model=ProductImportResult)
+async def import_product_workbook(
+    file: UploadFile,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    actor: ProductManager,
+) -> ProductImportResult:
+    """同步校验并导入商品工作簿。"""
+    content = await file.read(MAX_XLSX_BYTES + 1)
+    validate_xlsx_upload(file.filename, content)
+    candidates, errors = parse_product_workbook(content)
+    return await import_products(session, candidates, errors, actor.id)
 
 
 @router.get("/{product_id}", response_model=ProductRead)

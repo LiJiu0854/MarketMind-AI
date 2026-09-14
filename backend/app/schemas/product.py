@@ -2,8 +2,9 @@
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _normalize_upper(value: object) -> object:
@@ -103,3 +104,20 @@ class ProductImportError(BaseModel):
     field: str
     code: str
     message: str
+
+
+class ProductImportResult(BaseModel):
+    """同步商品导入结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_rows: int = Field(ge=0)
+    imported_rows: int = Field(ge=0)
+    failed_rows: int = Field(ge=0)
+    errors: list[ProductImportError]
+
+    @model_validator(mode="after")
+    def validate_totals(self) -> Self:
+        if self.total_rows != self.imported_rows + self.failed_rows:
+            raise ValueError("导入行数统计不一致")
+        return self

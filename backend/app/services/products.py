@@ -10,10 +10,13 @@ from app.models.product import Product
 from app.schemas.product import (
     ProductCreate,
     ProductFilters,
+    ProductImportError,
+    ProductImportResult,
     ProductPage,
     ProductRead,
     ProductUpdate,
 )
+from app.services.product_excel import ProductImportCandidate
 
 
 def _sku_conflict() -> AppError:
@@ -156,6 +159,71 @@ async def deactivate_product(
         await session.commit()
         await session.refresh(product)
         return product
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def find_existing_skus(
+    session: AsyncSession,
+    skus: set[str],
+) -> set[str]:
+    """一次查询返回数据库中已经存在的 SKU。"""
+    if not skus:
+        return set()
+    return set(await session.scalars(select(Product.sku).where(Product.sku.in_(skus))))
+
+
+async def import_products(
+    session: AsyncSession,
+    candidates: list[ProductImportCandidate],
+    row_errors: list[ProductImportError],
+    created_by_id: int,
+) -> ProductImportResult:
+    """跳过行级错误，在一次事务中写入所有合格商品。"""
+    try:
+        existing_skus = await find_existing_skus(
+            session,
+            {candidate.data.sku for candidate in candidates},
+        )
+        errors = [*row_errors]
+        products: list[Product] = []
+        for candidate in candidates:
+            if candidate.data.sku in existing_skus:
+                errors.append(
+                    ProductImportError(
+                        row=candidate.row,
+                        field="sku",
+                        code="DUPLICATE_SKU_IN_DATABASE",
+                        message="SKU 已存在",
+                    )
+                )
+            else:
+                products.append(
+                    Product(
+                        **candidate.data.model_dump(),
+                        created_by_id=created_by_id,
+                    )
+                )
+
+        if products:
+            session.add_all(products)
+            await session.commit()
+
+        errors.sort(key=lambda error: error.row)
+        return ProductImportResult(
+            total_rows=len(products) + len(errors),
+            imported_rows=len(products),
+            failed_rows=len(errors),
+            errors=errors,
+        )
+    except IntegrityError as exc:
+        await session.rollback()
+        raise AppError(
+            code="PRODUCT_IMPORT_CONFLICT",
+            message="导入期间 SKU 发生冲突，请重新导入",
+            status_code=409,
+        ) from exc
     except Exception:
         await session.rollback()
         raise
