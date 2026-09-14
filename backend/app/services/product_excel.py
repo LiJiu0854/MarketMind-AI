@@ -12,6 +12,7 @@ from openpyxl.utils.exceptions import InvalidFileException  # type: ignore[impor
 from pydantic import ValidationError
 
 from app.core.errors import AppError
+from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductImportError
 
 MAX_XLSX_BYTES = 5 * 1024 * 1024   # 5 MiB，二进制
@@ -328,3 +329,26 @@ def parse_product_workbook(
                 candidates.append(result)
 
     return candidates, errors
+
+
+def export_products_workbook(products: list[Product]) -> bytes:
+    """在内存中生成可重新打开的商品工作簿。"""
+    rows = [
+        {
+            "sku": product.sku,
+            "title": product.title,
+            "description": product.description,
+            "bullet_points": "\n".join(product.bullet_points),
+            "brand": product.brand,
+            "category": product.category,
+            "price": product.price,
+            "currency": product.currency,
+            "is_active": product.is_active,
+        }
+        for product in products
+    ]
+    frame = pd.DataFrame(rows, columns=EXCEL_COLUMNS)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        frame.to_excel(writer, index=False, sheet_name="Products")
+    return output.getvalue()

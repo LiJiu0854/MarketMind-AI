@@ -6,7 +6,7 @@ from io import BytesIO
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from openpyxl import Workbook  # type: ignore[import-untyped]
+from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +66,19 @@ def product_json() -> dict[str, object]:
         "title": "Product 1",
         "price": "19.90",
         "currency": "cny",
+    }
+
+
+def valid_listing_json(sku: str = "SKU-1", brand: str = "Brand A") -> dict[str, object]:
+    return {
+        "sku": sku,
+        "title": "A valid product title",
+        "description": "A" * 50,
+        "bullet_points": ["A" * 10, "B" * 10, "C" * 10],
+        "brand": brand,
+        "category": "Category",
+        "price": "19.90",
+        "currency": "CNY",
     }
 
 
@@ -341,3 +354,94 @@ async def test_import_conflict_returns_safe_409(
     assert response.json()["message"] == "导入期间 SKU 发生冲突，请重新导入"
     assert response.json()["request_id"]
     assert "sql" not in response.text.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [Role.ADMIN, Role.OPERATOR, Role.ANALYST])
+async def test_all_roles_can_check_listing(
+    client: AsyncClient,
+    session: AsyncSession,
+    role: Role,
+) -> None:
+    operator = await make_user(session, 1, Role.OPERATOR)
+    actor = await make_user(session, 2, role)
+    created = await client.post(
+        "/api/v1/products",
+        headers=auth_headers(operator),
+        json=valid_listing_json(),
+    )
+
+    response = await client.get(
+        f"/api/v1/products/{created.json()['id']}/listing-check",
+        headers=auth_headers(actor),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "product_id": created.json()["id"],
+        "passed": True,
+        "issues": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_listing_check_requires_authentication_and_existing_product(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    operator = await make_user(session, 1, Role.OPERATOR)
+
+    unauthenticated = await client.get("/api/v1/products/1/listing-check")
+    missing = await client.get(
+        "/api/v1/products/999999/listing-check",
+        headers=auth_headers(operator),
+    )
+
+    assert unauthenticated.status_code == 401
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "PRODUCT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [Role.ADMIN, Role.OPERATOR, Role.ANALYST])
+async def test_all_roles_export_filtered_xlsx(
+    client: AsyncClient,
+    session: AsyncSession,
+    role: Role,
+) -> None:
+    operator = await make_user(session, 1, Role.OPERATOR)
+    actor = await make_user(session, 2, role)
+    await client.post(
+        "/api/v1/products",
+        headers=auth_headers(operator),
+        json=valid_listing_json("000123", "Brand A"),
+    )
+    await client.post(
+        "/api/v1/products",
+        headers=auth_headers(operator),
+        json=valid_listing_json("SKU-2", "Brand B"),
+    )
+
+    response = await client.get(
+        "/api/v1/products/export?brand=Brand%20A",
+        headers=auth_headers(actor),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument."
+        "spreadsheetml.sheet"
+    )
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="products.xlsx"'
+    )
+    sheet = load_workbook(BytesIO(response.content), data_only=True).active
+    assert [cell.value for cell in sheet[1]] == list(EXCEL_COLUMNS)
+    assert [sheet.cell(row=row, column=1).value for row in range(2, sheet.max_row + 1)] == [
+        "000123"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_product_export_requires_authentication(client: AsyncClient) -> None:
+    assert (await client.get("/api/v1/products/export")).status_code == 401

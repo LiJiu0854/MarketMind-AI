@@ -5,9 +5,10 @@ from io import BytesIO
 
 import pandas as pd  # type: ignore[import-untyped]
 import pytest
-from openpyxl import Workbook  # type: ignore[import-untyped]
+from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 from app.core.errors import AppError
+from app.models.product import Product
 from app.schemas.product import ProductImportError
 from app.services.product_excel import (
     EXCEL_COLUMNS,
@@ -19,6 +20,7 @@ from app.services.product_excel import (
     clean_decimal,
     clean_sku,
     clean_text,
+    export_products_workbook,
     parse_product_row,
     parse_product_workbook,
     read_product_dataframe,
@@ -297,3 +299,38 @@ def test_parse_product_workbook_does_not_reserve_sku_from_invalid_row() -> None:
 
     assert [item.row for item in candidates] == [3]
     assert [(error.row, error.code) for error in errors] == [(2, "REQUIRED_FIELD")]
+
+
+def export_product(**changes: object) -> Product:
+    values: dict[str, object] = {
+        "sku": "000123",
+        "title": "Exported Product",
+        "description": "Description",
+        "bullet_points": ["First point", "Second point"],
+        "brand": "Brand",
+        "category": "Category",
+        "price": Decimal("19.90"),
+        "currency": "CNY",
+        "is_active": True,
+        "created_by_id": 1,
+    }
+    values.update(changes)
+    return Product(**values)
+
+
+def test_export_workbook_round_trips_columns_values_and_bullets() -> None:
+    content = export_products_workbook([export_product()])
+    sheet = load_workbook(BytesIO(content), data_only=True).active
+
+    assert [cell.value for cell in sheet[1]] == list(EXCEL_COLUMNS)
+    assert sheet["A2"].value == "000123"
+    assert Decimal(str(sheet["G2"].value)) == Decimal("19.9")
+    assert sheet["D2"].value == "First point\nSecond point"
+
+
+def test_export_empty_products_keeps_headers() -> None:
+    content = export_products_workbook([])
+    sheet = load_workbook(BytesIO(content), data_only=True).active
+
+    assert sheet.max_row == 1
+    assert [cell.value for cell in sheet[1]] == list(EXCEL_COLUMNS)

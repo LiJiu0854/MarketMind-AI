@@ -113,6 +113,20 @@ async def list_products(
     )
 
 
+async def get_products_for_export(
+    session: AsyncSession,
+    filters: ProductFilters,
+) -> list[Product]:
+    """返回符合列表筛选语义的全部商品。"""
+    return list(
+        await session.scalars(
+            select(Product)
+            .where(*_product_filter_conditions(filters))
+            .order_by(Product.id)
+        )
+    )
+
+
 async def update_product(
     session: AsyncSession,
     product: Product,

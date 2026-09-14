@@ -13,6 +13,7 @@ from app.services.products import (
     create_product,
     deactivate_product,
     get_product,
+    get_products_for_export,
     list_products,
     update_product,
 )
@@ -127,3 +128,61 @@ async def test_deactivate_product_keeps_record(session: AsyncSession) -> None:
 
     assert result.is_active is False
     assert await get_product(session, product.id) is product
+
+
+@pytest.mark.asyncio
+async def test_products_for_export_reuse_filters_without_pagination(
+    session: AsyncSession,
+) -> None:
+    actor_id = await make_actor(session)
+    first = await create_product(
+        session,
+        product_data(1, brand="Brand A", category="Category A"),
+        actor_id,
+    )
+    await create_product(
+        session,
+        product_data(2, brand="Brand B", category="Category A"),
+        actor_id,
+    )
+    third = await create_product(
+        session,
+        product_data(3, brand="Brand A", category="Category A"),
+        actor_id,
+    )
+
+    products = await get_products_for_export(
+        session,
+        ProductFilters(brand="Brand A", category="Category A", is_active=True),
+    )
+
+    assert [product.id for product in products] == [first.id, third.id]
+
+
+@pytest.mark.asyncio
+async def test_products_for_export_support_all_fixed_filters(
+    session: AsyncSession,
+) -> None:
+    actor_id = await make_actor(session)
+    product = await create_product(
+        session,
+        product_data(
+            1,
+            brand="Brand A",
+            category="Category A",
+            is_active=False,
+        ),
+        actor_id,
+    )
+
+    products = await get_products_for_export(
+        session,
+        ProductFilters(
+            sku="sku-1",
+            brand="Brand A",
+            category="Category A",
+            is_active=False,
+        ),
+    )
+
+    assert products == [product]

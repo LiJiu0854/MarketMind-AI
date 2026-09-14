@@ -121,3 +121,24 @@ class ProductImportResult(BaseModel):
         if self.total_rows != self.imported_rows + self.failed_rows:
             raise ValueError("导入行数统计不一致")
         return self
+
+
+class ListingIssue(BaseModel):
+    """单条可解释的 Listing 问题。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    field: str
+    message: str
+    suggestion: str
+
+
+class ListingCheckResult(BaseModel):
+    """一个商品的确定性 Listing 检查结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: int
+    passed: bool
+    issues: list[ListingIssue]
