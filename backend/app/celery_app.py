@@ -23,7 +23,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         "marketmind",
         broker=broker,
         backend=backend,
-        include=["app.tasks.user_stats"],
+        include=["app.tasks.user_stats", "app.tasks.semantic_review"],
     )
     app.conf.update(
         task_serializer="json",

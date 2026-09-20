@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from openai import (
     APIConnectionError,
@@ -274,3 +275,107 @@ async def list_semantic_reviews(
         )
     )
     return items, total
+
+
+async def mark_review_running(
+    session: AsyncSession,
+    review_id: int,
+) -> SemanticReview | None:
+    """把非终态审核标记为运行，并记录本次真实尝试。"""
+    try:
+        review = await session.get(SemanticReview, review_id)
+        if review is None or review.status in {
+            SemanticReviewStatus.SUCCESS,
+            SemanticReviewStatus.FAILURE,
+        }:
+            return None
+        review.status = SemanticReviewStatus.RUNNING
+        review.started_at = review.started_at or datetime.now(UTC)
+        review.attempt_count += 1
+        await session.commit()
+        await session.refresh(review)
+        return review
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def mark_review_success(
+    session: AsyncSession,
+    review_id: int,
+    completion: ReviewCompletion,
+) -> SemanticReview | None:
+    """保存通过校验的结果并进入成功终态。"""
+    try:
+        review = await session.get(SemanticReview, review_id)
+        if review is None:
+            return None
+        result = completion.result
+        review.status = SemanticReviewStatus.SUCCESS
+        review.score = result.score
+        review.dimension_scores = result.dimension_scores.model_dump(mode="json")
+        review.summary = result.summary
+        review.issues = [issue.model_dump(mode="json") for issue in result.issues]
+        review.rewrite = result.rewrite.model_dump(mode="json")
+        review.prompt_tokens = completion.prompt_tokens
+        review.completion_tokens = completion.completion_tokens
+        review.total_tokens = completion.total_tokens
+        review.error_code = None
+        review.error_message = None
+        review.completed_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(review)
+        return review
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def mark_review_failure(
+    session: AsyncSession,
+    review_id: int,
+    code: str,
+    message: str,
+) -> SemanticReview | None:
+    """清除未完成结果，只保存稳定安全的失败信息。"""
+    try:
+        review = await session.get(SemanticReview, review_id)
+        if review is None:
+            return None
+        review.status = SemanticReviewStatus.FAILURE
+        review.score = None
+        review.dimension_scores = None
+        review.summary = None
+        review.issues = None
+        review.rewrite = None
+        review.prompt_tokens = None
+        review.completion_tokens = None
+        review.total_tokens = None
+        review.error_code = code
+        review.error_message = message
+        review.completed_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(review)
+        return review
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def set_review_task_id(
+    session: AsyncSession,
+    review_id: int,
+    task_id: str,
+) -> SemanticReview:
+    """在 Broker 接受任务后回填 Celery task ID。"""
+    try:
+        review = await session.get(SemanticReview, review_id)
+        if review is None:
+            raise AppError("SEMANTIC_REVIEW_NOT_FOUND", "语义审核不存在", 404)
+        review.celery_task_id = task_id
+        await session.commit()
+        await session.refresh(review)
+        return review
+    except Exception:
+        await session.rollback()
+        raise
