@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     celery_result_backend: SecretStr | None = None
     celery_task_always_eager: bool = False
     celery_result_expires_seconds: int = Field(default=3_600, gt=0)
-    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
-    siliconflow_model: str = "deepseek-ai/DeepSeek-V4-Flash"
-    siliconflow_api_key: SecretStr | None = None
+    llm_provider: str = "openai"
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str | None = None
+    llm_api_key: SecretStr | None = None
+    llm_timeout_seconds: int = Field(default=60, gt=0)
+    llm_max_output_tokens: int = Field(default=2_000, gt=0)
