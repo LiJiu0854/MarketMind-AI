@@ -1,9 +1,12 @@
 """语义审核输入与输出结构。"""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models.semantic_review import SemanticReviewStatus
 
 ReviewDimension = Literal[
     "completeness",
@@ -83,3 +86,51 @@ class LLMReviewResult(BaseModel):
     summary: str = Field(min_length=1, max_length=1_000)
     issues: list[SemanticReviewIssue] = Field(max_length=20)
     rewrite: SemanticReviewRewrite
+
+
+class SemanticReviewCreated(BaseModel):
+    """审核成功投递后的 202 响应。"""
+
+    review_id: int
+    task_id: str
+    status: SemanticReviewStatus
+
+
+class SemanticReviewRead(BaseModel):
+    """MySQL 中一条完整审核历史。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    product_id: int
+    requested_by_id: int
+    celery_task_id: str | None
+    status: SemanticReviewStatus
+    product_snapshot: ProductSnapshot
+    provider: str
+    model: str
+    prompt_version: str
+    score: int | None
+    dimension_scores: ReviewDimensionScores | None
+    summary: str | None
+    issues: list[SemanticReviewIssue] | None
+    rewrite: SemanticReviewRewrite | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+    attempt_count: int
+    error_code: str | None
+    error_message: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SemanticReviewPage(BaseModel):
+    """语义审核历史分页响应。"""
+
+    items: list[SemanticReviewRead]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)

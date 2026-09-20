@@ -2,8 +2,9 @@
 
 MarketMind AI 是面向电商运营团队的 AI 商品运营与竞品研究平台。
 
-当前已完成阶段 3 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
-同步导入、确定性 Listing 检查和筛选导出。
+当前已完成阶段 4 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
+同步导入、确定性 Listing 检查和筛选导出，以及异步 LLM Listing 语义审核与
+MySQL 历史持久化。
 
 ## 环境要求
 
@@ -42,8 +43,32 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 - `GET /products/export`：三种角色按相同筛选语义下载 `.xlsx`；
 - `GET /products/{product_id}/listing-check`：三种角色执行确定性 Listing 检查；
 - `GET/PATCH/DELETE /products/{product_id}`：读取、部分更新和软停用。
+- `POST /products/{product_id}/semantic-reviews`：Admin、Operator 发起异步语义审核；
+- `GET /products/{product_id}/semantic-reviews`：三种角色分页查看 MySQL 审核历史；
+- `GET /products/{product_id}/semantic-reviews/{review_id}`：三种角色查看结构化结果。
 
 导入和导出只使用请求内存，不保存工作簿文件。导入允许合法行成功、错误行返回稳定错误；并发 SKU 冲突会整体回滚。
+
+语义审核创建接口返回 `202`、`review_id` 和 Celery `task_id`。客户端随后轮询历史或
+详情接口；业务状态以 MySQL 中的 `pending/running/success/failure` 为准，不读取会过期的
+Celery Result Backend。同一商品只允许一条 pending/running 审核，终态后可再次发起并保留历史。
+
+## 数据库迁移与 Worker
+
+API 和 Celery Worker 启动前，确保 MySQL 与 Redis 可用，并应用开发库迁移：
+
+```powershell
+.venv\Scripts\alembic.exe -x database=development upgrade head
+```
+
+Windows 本地启动 Celery Worker：
+
+```powershell
+.venv\Scripts\celery.exe -A app.celery_app.celery_app worker --loglevel=INFO --pool=solo
+```
+
+Worker 使用 Redis 锁避免同一审核并行执行，模型结果、错误摘要和 Token 用量最终写入
+MySQL。自动化测试会 Mock 模型 SDK，不产生真实模型费用。
 
 ## 启动 API
 
@@ -63,6 +88,30 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 ## 环境变量
 
 `.env.example` 只记录安全的配置示例。需要本地配置时，将它复制为 `.env` 并填写真实值；`.env` 已被 Git 忽略，不得提交任何 API Key。
+
+### 切换 OpenAI-compatible 模型
+
+业务代码只读取以下配置，不根据供应商名称分支：
+
+```dotenv
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=<支持 Chat Completions 和 JSON Mode 的模型 ID>
+LLM_API_KEY=
+LLM_TIMEOUT_SECONDS=60
+LLM_MAX_OUTPUT_TOKENS=2000
+```
+
+切换服务商时只改 `LLM_PROVIDER/LLM_BASE_URL/LLM_MODEL/LLM_API_KEY`，然后重启 API 与
+Worker。常见公开兼容入口示例：
+
+- OpenAI：`https://api.openai.com/v1`
+- SiliconFlow：`https://api.siliconflow.cn/v1`
+- 阿里云百炼（Qwen）：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+- DeepSeek：`https://api.deepseek.com`
+
+不要把上述示例理解为模型可用性保证：模型 ID、价格和 JSON Mode 支持会变化，部署前应以
+服务商当时的官方文档为准。代码不读取、不返回也不保存模型思维链或未经验证的原始响应。
 
 ## 阶段文档
 
