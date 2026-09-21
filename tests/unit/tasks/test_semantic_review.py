@@ -394,6 +394,32 @@ async def test_success_calls_model_between_short_database_sessions(
 
 
 @pytest.mark.asyncio
+async def test_success_race_reports_ignored_when_terminal_state_won(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_worker_resources(monkeypatch)
+    monkeypatch.setattr(
+        review_task,
+        "mark_review_running",
+        AsyncMock(return_value=detached_review()),
+    )
+    monkeypatch.setattr(
+        review_task,
+        "request_semantic_review",
+        Mock(return_value=ReviewCompletion(review_result(), 120, 80, 200)),
+    )
+    monkeypatch.setattr(
+        review_task,
+        "mark_review_success",
+        AsyncMock(return_value=None),
+    )
+
+    result = await review_task.run_semantic_review_attempt(19)
+
+    assert result == {"review_id": 19, "status": "ignored"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "value"),
     [

@@ -70,7 +70,9 @@ async def run_semantic_review_attempt(review_id: int) -> dict[str, int | str]:
                 completion = request_semantic_review(snapshot, request_settings)
 
                 async with session_factory() as session:
-                    await mark_review_success(session, review_id, completion)
+                    saved = await mark_review_success(session, review_id, completion)
+                if saved is None:
+                    return {"review_id": review_id, "status": "ignored"}
                 return {"review_id": review_id, "status": "success"}
         finally:
             await engine.dispose()
