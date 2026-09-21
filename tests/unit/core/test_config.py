@@ -18,9 +18,12 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "LOG_LEVEL",
     "JWT_SECRET",
     "ACCESS_TOKEN_EXPIRE_MINUTES",
-    "SILICONFLOW_BASE_URL",
-    "SILICONFLOW_MODEL",
-    "SILICONFLOW_API_KEY",
+    "LLM_PROVIDER",
+    "LLM_BASE_URL",
+    "LLM_MODEL",
+    "LLM_API_KEY",
+    "LLM_TIMEOUT_SECONDS",
+    "LLM_MAX_OUTPUT_TOKENS",
     "TEST_DATABASE_URL",
     "REDIS_URL",
     "TEST_REDIS_URL",
@@ -55,9 +58,17 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.app_port == 8010
     assert settings.log_level == "INFO"
     assert settings.app_debug is False
-    assert settings.siliconflow_base_url == "https://api.siliconflow.cn/v1"
-    assert settings.siliconflow_model == "deepseek-ai/DeepSeek-V4-Flash"
-    assert settings.siliconflow_api_key is None
+
+
+def test_llm_settings_have_portable_safe_defaults() -> None:
+    settings = Settings()
+
+    assert settings.llm_provider == "openai"
+    assert settings.llm_base_url == "https://api.openai.com/v1"
+    assert settings.llm_model is None
+    assert settings.llm_api_key is None
+    assert settings.llm_timeout_seconds == 60
+    assert settings.llm_max_output_tokens == 2_000
 
 
 def test_settings_read_and_convert_environment_variables(
@@ -66,25 +77,61 @@ def test_settings_read_and_convert_environment_variables(
     """环境变量未覆盖默认值或端口未转换为整数时应失败。"""
     monkeypatch.setenv("APP_NAME", "MarketMind Test")
     monkeypatch.setenv("APP_PORT", "9010")
-    monkeypatch.setenv("SILICONFLOW_API_KEY", "test-secret-value")
+    monkeypatch.setenv("LLM_API_KEY", "test-secret-value")
 
     settings = Settings()
 
     assert settings.app_name == "MarketMind Test"
     assert settings.app_port == 9010
     assert isinstance(settings.app_port, int)
-    assert isinstance(settings.siliconflow_api_key, SecretStr)
-    assert settings.siliconflow_api_key.get_secret_value() == "test-secret-value"
+    assert isinstance(settings.llm_api_key, SecretStr)
+    assert settings.llm_api_key.get_secret_value() == "test-secret-value"
 
 
 def test_settings_repr_does_not_expose_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Settings 的调试输出泄露 API Key 时应失败。"""
     api_key = "secret-that-must-not-appear"
-    monkeypatch.setenv("SILICONFLOW_API_KEY", api_key)
+    monkeypatch.setenv("LLM_API_KEY", api_key)
 
     settings = Settings()
 
     assert api_key not in repr(settings)
+
+
+def test_blank_optional_llm_values_are_normalized_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "   ")
+    monkeypatch.setenv("LLM_API_KEY", "   ")
+
+    settings = Settings()
+
+    assert settings.llm_model is None
+    assert settings.llm_api_key is None
+
+
+@pytest.mark.parametrize("name", ["LLM_PROVIDER", "LLM_BASE_URL"])
+def test_required_llm_text_rejects_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    monkeypatch.setenv(name, "   ")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+@pytest.mark.parametrize("name", ["LLM_TIMEOUT_SECONDS", "LLM_MAX_OUTPUT_TOKENS"])
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_llm_positive_limits_reject_non_positive_values(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings()
 
 
 def test_app_version_default() -> None:

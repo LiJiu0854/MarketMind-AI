@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.config import Settings
 from app.db.session import create_engine
 from app.models.product import Product
+from app.models.semantic_review import SemanticReview
 from app.models.user import User
 
 
@@ -33,6 +34,7 @@ async def session(test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """在外层事务中提供可提交的隔离 Session。"""
     async with test_engine.connect() as connection:
         transaction = await connection.begin()
+        await connection.execute(delete(SemanticReview))
         await connection.execute(delete(Product))
         await connection.execute(delete(User))
         db_session = AsyncSession(
