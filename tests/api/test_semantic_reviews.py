@@ -28,6 +28,7 @@ from app.services.products import create_product
 from app.services.semantic_reviews import (
     ReviewCompletion,
     create_semantic_review,
+    mark_review_running,
     mark_review_success,
 )
 from app.services.users import create_user
@@ -190,10 +191,19 @@ async def test_create_review_requires_authentication(client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "api_key"),
+    [
+        (None, None),
+        ("test-model", SecretStr("")),
+    ],
+)
 async def test_create_review_rejects_missing_llm_config(
     session: AsyncSession,
+    model: str | None,
+    api_key: SecretStr | None,
 ) -> None:
-    app = create_app(Settings(llm_model=None, llm_api_key=None))
+    app = create_app(Settings(llm_model=model, llm_api_key=api_key))
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield session
@@ -310,6 +320,7 @@ async def test_all_roles_can_read_history_and_detail_without_dispatch(
         provider="openai",
         model="first-model",
     )
+    await mark_review_running(session, first.id)
     await mark_review_success(
         session,
         first.id,

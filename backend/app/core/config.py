@@ -1,6 +1,6 @@
 """类型化应用配置。"""
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,3 +43,29 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     llm_timeout_seconds: int = Field(default=60, gt=0)
     llm_max_output_tokens: int = Field(default=2_000, gt=0)
+
+    @field_validator("llm_provider", "llm_base_url")
+    @classmethod
+    def validate_required_llm_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("LLM 配置不能为空")
+        return value
+
+    @field_validator("llm_model")
+    @classmethod
+    def normalize_optional_llm_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @field_validator("llm_api_key")
+    @classmethod
+    def normalize_optional_llm_secret(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is None:
+            return None
+        secret = value.get_secret_value().strip()
+        return SecretStr(secret) if secret else None

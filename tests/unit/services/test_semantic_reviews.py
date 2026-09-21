@@ -1,6 +1,7 @@
 """语义审核 Prompt 与 OpenAI-compatible 调用测试。"""
 
 import json
+import traceback
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -137,6 +138,7 @@ def test_request_semantic_review_calls_compatible_json_mode(
         api_key="test-api-key",
         base_url="https://api.openai.com/v1",
         timeout=60,
+        max_retries=0,
     )
     client.chat.completions.create.assert_called_once_with(
         model="test-model",
@@ -165,6 +167,22 @@ def test_empty_malformed_or_schema_invalid_output_is_rejected(
     assert exc_info.value.code == "REVIEW_INVALID_RESPONSE"
     assert exc_info.value.retryable is False
     assert exc_info.value.message == "模型返回格式无效"
+
+
+@patch("app.services.semantic_reviews.OpenAI")
+def test_stringified_score_is_rejected_in_strict_mode(
+    openai_class: MagicMock,
+) -> None:
+    result = valid_result_data()
+    result["score"] = "88"
+    openai_class.return_value.chat.completions.create.return_value = completion_response(
+        json.dumps(result, ensure_ascii=False)
+    )
+
+    with pytest.raises(SemanticReviewCallError) as exc_info:
+        request_semantic_review(snapshot(), llm_settings())
+
+    assert exc_info.value.code == "REVIEW_INVALID_RESPONSE"
 
 
 @patch("app.services.semantic_reviews.OpenAI")
@@ -298,3 +316,4 @@ def test_sdk_errors_map_to_safe_stable_categories(
     assert exc_info.value.code == expected_code
     assert exc_info.value.retryable is retryable
     assert "secret" not in exc_info.value.message
+    assert "secret" not in "".join(traceback.format_exception(exc_info.value))

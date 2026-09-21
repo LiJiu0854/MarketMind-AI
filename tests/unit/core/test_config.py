@@ -98,6 +98,29 @@ def test_settings_repr_does_not_expose_api_key(monkeypatch: pytest.MonkeyPatch) 
     assert api_key not in repr(settings)
 
 
+def test_blank_optional_llm_values_are_normalized_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_MODEL", "   ")
+    monkeypatch.setenv("LLM_API_KEY", "   ")
+
+    settings = Settings()
+
+    assert settings.llm_model is None
+    assert settings.llm_api_key is None
+
+
+@pytest.mark.parametrize("name", ["LLM_PROVIDER", "LLM_BASE_URL"])
+def test_required_llm_text_rejects_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> None:
+    monkeypatch.setenv(name, "   ")
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
 @pytest.mark.parametrize("name", ["LLM_TIMEOUT_SECONDS", "LLM_MAX_OUTPUT_TOKENS"])
 @pytest.mark.parametrize("value", ["0", "-1"])
 def test_llm_positive_limits_reject_non_positive_values(

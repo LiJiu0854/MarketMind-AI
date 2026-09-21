@@ -93,6 +93,7 @@ def request_semantic_review(
             api_key=settings.llm_api_key.get_secret_value(),
             base_url=settings.llm_base_url,
             timeout=settings.llm_timeout_seconds,
+            max_retries=0,
         )
         response = client.chat.completions.create(
             model=settings.llm_model,
@@ -107,25 +108,25 @@ def request_semantic_review(
                 "模型返回格式无效",
                 retryable=False,
             )
-        result = LLMReviewResult.model_validate(json.loads(content))
-    except (AuthenticationError, PermissionDeniedError) as exc:
+        result = LLMReviewResult.model_validate(json.loads(content), strict=True)
+    except (AuthenticationError, PermissionDeniedError):
         raise SemanticReviewCallError(
             "REVIEW_PROVIDER_AUTH_ERROR",
             "模型服务认证失败",
             retryable=False,
-        ) from exc
-    except (BadRequestError, NotFoundError) as exc:
+        ) from None
+    except (BadRequestError, NotFoundError):
         raise SemanticReviewCallError(
             "REVIEW_PROVIDER_REQUEST_ERROR",
             "模型请求配置无效",
             retryable=False,
-        ) from exc
-    except (APIConnectionError, APITimeoutError, RateLimitError) as exc:
+        ) from None
+    except (APIConnectionError, APITimeoutError, RateLimitError):
         raise SemanticReviewCallError(
             "REVIEW_PROVIDER_UNAVAILABLE",
             "模型服务暂时不可用",
             retryable=True,
-        ) from exc
+        ) from None
     except APIStatusError as exc:
         retryable = exc.status_code >= 500
         raise SemanticReviewCallError(
@@ -134,13 +135,13 @@ def request_semantic_review(
             else "REVIEW_PROVIDER_REQUEST_ERROR",
             "模型服务暂时不可用" if retryable else "模型请求配置无效",
             retryable=retryable,
-        ) from exc
-    except (json.JSONDecodeError, ValidationError, IndexError, AttributeError) as exc:
+        ) from None
+    except (json.JSONDecodeError, ValidationError, IndexError, AttributeError):
         raise SemanticReviewCallError(
             "REVIEW_INVALID_RESPONSE",
             "模型返回格式无效",
             retryable=False,
-        ) from exc
+        ) from None
 
     usage = response.usage
     return ReviewCompletion(
@@ -283,7 +284,11 @@ async def mark_review_running(
 ) -> SemanticReview | None:
     """把非终态审核标记为运行，并记录本次真实尝试。"""
     try:
-        review = await session.get(SemanticReview, review_id)
+        review = await session.scalar(
+            select(SemanticReview)
+            .where(SemanticReview.id == review_id)
+            .with_for_update()
+        )
         if review is None or review.status in {
             SemanticReviewStatus.SUCCESS,
             SemanticReviewStatus.FAILURE,
@@ -307,8 +312,12 @@ async def mark_review_success(
 ) -> SemanticReview | None:
     """保存通过校验的结果并进入成功终态。"""
     try:
-        review = await session.get(SemanticReview, review_id)
-        if review is None:
+        review = await session.scalar(
+            select(SemanticReview)
+            .where(SemanticReview.id == review_id)
+            .with_for_update()
+        )
+        if review is None or review.status is not SemanticReviewStatus.RUNNING:
             return None
         result = completion.result
         review.status = SemanticReviewStatus.SUCCESS
@@ -339,8 +348,12 @@ async def mark_review_failure(
 ) -> SemanticReview | None:
     """清除未完成结果，只保存稳定安全的失败信息。"""
     try:
-        review = await session.get(SemanticReview, review_id)
-        if review is None:
+        review = await session.scalar(
+            select(SemanticReview)
+            .where(SemanticReview.id == review_id)
+            .with_for_update()
+        )
+        if review is None or review.status not in ACTIVE_REVIEW_STATUSES:
             return None
         review.status = SemanticReviewStatus.FAILURE
         review.score = None

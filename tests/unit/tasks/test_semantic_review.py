@@ -1,5 +1,6 @@
 """Celery 语义审核任务与状态迁移测试。"""
 
+import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -25,6 +26,7 @@ from app.schemas.semantic_review import LLMReviewResult
 from app.schemas.user import UserCreate
 from app.services.products import create_product
 from app.services.semantic_reviews import (
+    PROMPT_VERSION,
     ReviewCompletion,
     SemanticReviewCallError,
     create_semantic_review,
@@ -145,6 +147,7 @@ async def test_mark_success_persists_validated_result_and_usage(
     session: AsyncSession,
 ) -> None:
     review_id = await pending_review(session, "success")
+    await mark_review_running(session, review_id)
     completion = ReviewCompletion(
         result=review_result(),
         prompt_tokens=120,
@@ -172,15 +175,11 @@ async def test_mark_success_persists_validated_result_and_usage(
 
 
 @pytest.mark.asyncio
-async def test_mark_failure_clears_partial_result_and_saves_safe_error(
+async def test_mark_failure_persists_safe_error_from_running(
     session: AsyncSession,
 ) -> None:
     review_id = await pending_review(session, "failure")
-    await mark_review_success(
-        session,
-        review_id,
-        ReviewCompletion(review_result(), 120, 80, 200),
-    )
+    await mark_review_running(session, review_id)
 
     review = await mark_review_failure(
         session,
@@ -200,6 +199,55 @@ async def test_mark_failure_clears_partial_result_and_saves_safe_error(
     assert review.error_code == "REVIEW_INVALID_RESPONSE"
     assert review.error_message == "模型返回格式无效"
     assert review.completed_at is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_status", "transition"),
+    [
+        (SemanticReviewStatus.SUCCESS, "failure"),
+        (SemanticReviewStatus.FAILURE, "success"),
+    ],
+)
+async def test_terminal_review_cannot_be_overwritten(
+    session: AsyncSession,
+    terminal_status: SemanticReviewStatus,
+    transition: str,
+) -> None:
+    review_id = await pending_review(session, f"immutable-{terminal_status.value}")
+    await mark_review_running(session, review_id)
+    if terminal_status is SemanticReviewStatus.SUCCESS:
+        await mark_review_success(
+            session,
+            review_id,
+            ReviewCompletion(review_result(), 120, 80, 200),
+        )
+    else:
+        await mark_review_failure(
+            session,
+            review_id,
+            "REVIEW_INVALID_RESPONSE",
+            "模型返回格式无效",
+        )
+
+    if transition == "success":
+        changed = await mark_review_success(
+            session,
+            review_id,
+            ReviewCompletion(review_result(), 120, 80, 200),
+        )
+    else:
+        changed = await mark_review_failure(
+            session,
+            review_id,
+            "REVIEW_INTERNAL_ERROR",
+            "不应覆盖终态",
+        )
+
+    assert changed is None
+    stored = await session.get_one(SemanticReview, review_id)
+    await session.refresh(stored)
+    assert stored.status is terminal_status
 
 
 @pytest.mark.asyncio
@@ -230,6 +278,9 @@ def worker_settings() -> Settings:
 
 def detached_review() -> SimpleNamespace:
     return SimpleNamespace(
+        provider="openai",
+        model="persisted-model",
+        prompt_version=PROMPT_VERSION,
         product_snapshot={
             "sku": "SKU-1",
             "title": "Useful Product",
@@ -335,7 +386,43 @@ async def test_success_calls_model_between_short_database_sessions(
     assert session_factory.call_count == 2
     running.assert_awaited_once()
     request_review.assert_called_once()
+    request_settings = request_review.call_args.args[1]
+    assert request_settings.llm_model == "persisted-model"
     success.assert_awaited_once()
+    engine.dispose.assert_awaited_once_with()
+    close_redis.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("provider", "different-provider"),
+        ("prompt_version", "retired-prompt"),
+    ],
+)
+async def test_worker_rejects_audit_identity_drift_before_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    engine, close_redis, _ = configure_worker_resources(monkeypatch)
+    review = detached_review()
+    setattr(review, field, value)
+    request_review = Mock()
+    monkeypatch.setattr(
+        review_task,
+        "mark_review_running",
+        AsyncMock(return_value=review),
+    )
+    monkeypatch.setattr(review_task, "request_semantic_review", request_review)
+
+    with pytest.raises(SemanticReviewCallError) as exc_info:
+        await review_task.run_semantic_review_attempt(18)
+
+    assert exc_info.value.code == "REVIEW_CONFIG_ERROR"
+    assert exc_info.value.retryable is False
+    request_review.assert_not_called()
     engine.dispose.assert_awaited_once_with()
     close_redis.assert_awaited_once()
 
@@ -441,13 +528,17 @@ def test_retryable_provider_error_uses_bounded_exponential_backoff(
 
     task = MagicMock()
     task.request.retries = retries
-    task.retry.side_effect = Retry()
+    task.retry.return_value = Retry()
     monkeypatch.setattr(review_task, "run_semantic_review_attempt", fail_attempt)
 
     with pytest.raises(Retry):
         review_task.run_review_task(task, 14)
 
-    task.retry.assert_called_once_with(exc=error, countdown=2**retries)
+    task.retry.assert_called_once_with(
+        exc=error,
+        countdown=2**retries,
+        throw=False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -517,16 +608,18 @@ def test_transient_infrastructure_error_retries_without_leaking_details(
 
     task = MagicMock()
     task.request.retries = 0
-    task.retry.side_effect = Retry()
+    task.retry.return_value = Retry()
     monkeypatch.setattr(review_task, "run_semantic_review_attempt", fail_attempt)
 
-    with pytest.raises(Retry):
+    with pytest.raises(Retry) as exc_info:
         review_task.run_review_task(task, 16)
 
     retry_error = task.retry.call_args.kwargs["exc"]
     assert str(retry_error) == "审核基础设施暂时不可用"
     assert "secret" not in str(retry_error)
+    assert "secret" not in "".join(traceback.format_exception(exc_info.value))
     assert task.retry.call_args.kwargs["countdown"] == 1
+    assert task.retry.call_args.kwargs["throw"] is False
 
 
 def test_generate_task_delegates_to_testable_runner(

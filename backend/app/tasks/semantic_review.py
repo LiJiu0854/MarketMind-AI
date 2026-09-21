@@ -14,6 +14,7 @@ from app.db.session import create_engine, create_session_factory
 from app.schemas.semantic_review import ProductSnapshot
 from app.services.redis_guards import redis_lock
 from app.services.semantic_reviews import (
+    PROMPT_VERSION,
     SemanticReviewCallError,
     mark_review_failure,
     mark_review_running,
@@ -52,8 +53,21 @@ async def run_semantic_review_attempt(review_id: int) -> dict[str, int | str]:
                 if review is None:
                     return {"review_id": review_id, "status": "ignored"}
 
+                if (
+                    review.provider != settings.llm_provider
+                    or review.prompt_version != PROMPT_VERSION
+                ):
+                    raise SemanticReviewCallError(
+                        "REVIEW_CONFIG_ERROR",
+                        "审核配置与发起时不一致",
+                        retryable=False,
+                    )
+
                 snapshot = ProductSnapshot.model_validate(review.product_snapshot)
-                completion = request_semantic_review(snapshot, settings)
+                request_settings = settings.model_copy(
+                    update={"llm_model": review.model}
+                )
+                completion = request_semantic_review(snapshot, request_settings)
 
                 async with session_factory() as session:
                     await mark_review_success(session, review_id, completion)
@@ -91,14 +105,16 @@ def run_review_task(task: Task, review_id: int) -> dict[str, int | str]:
     except SemanticReviewCallError as error:
         retries = int(task.request.retries)
         if error.retryable and retries < MAX_REVIEW_RETRIES:
-            raise task.retry(exc=error, countdown=2**retries) from error
+            retry = task.retry(exc=error, countdown=2**retries, throw=False)
+            raise retry from None
         asyncio.run(persist_review_failure(review_id, error.code, error.message))
         return {"review_id": review_id, "status": "failure"}
     except (OperationalError, RedisError, AppError):
         retries = int(task.request.retries)
         if retries < MAX_REVIEW_RETRIES:
             safe_error = RuntimeError("审核基础设施暂时不可用")
-            raise task.retry(exc=safe_error, countdown=2**retries) from None
+            retry = task.retry(exc=safe_error, countdown=2**retries, throw=False)
+            raise retry from None
         asyncio.run(
             persist_review_failure(
                 review_id,
