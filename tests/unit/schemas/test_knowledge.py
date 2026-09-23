@@ -51,7 +51,12 @@ def test_provider_and_retrieval_payloads_forbid_extra_fields() -> None:
         )
 
     with pytest.raises(ValidationError):
-        RAGModelResult(answer="Thirty days.", citation_indices=[0], ignored=True)  # type: ignore[call-arg]
+        RAGModelResult(  # type: ignore[call-arg]
+            answer="Thirty days.", cited_chunk_numbers=[1], refused=False, ignored=True
+        )
+
+    result = RAGModelResult(answer="Thirty days.", cited_chunk_numbers=[1], refused=False)
+    assert result.cited_chunk_numbers == [1]
 
 
 def test_citation_limits_are_enforced() -> None:

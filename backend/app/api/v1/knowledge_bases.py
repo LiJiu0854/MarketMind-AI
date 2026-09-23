@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user, get_db_session, require_roles
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.models.knowledge import KnowledgeBase, KnowledgeDocument
+from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeQuery
 from app.models.user import Role, User
 from app.schemas.knowledge import (
     KnowledgeBaseCreate,
@@ -22,18 +22,24 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreated,
     KnowledgeDocumentPage,
     KnowledgeDocumentRead,
+    KnowledgeQueryPage,
+    KnowledgeQueryRead,
+    KnowledgeQuestionCreate,
 )
 from app.services.knowledge import (
     attach_document_task_id,
     create_knowledge_base,
     get_knowledge_base,
     get_knowledge_document,
+    get_knowledge_query,
     list_knowledge_bases,
     list_knowledge_documents,
+    list_knowledge_queries,
     mark_document_dispatch_failure,
     stage_knowledge_document,
     validate_upload,
 )
+from app.services.rag import answer_knowledge_question
 from app.tasks.knowledge import index_knowledge_document
 
 Admin = Annotated[User, Depends(require_roles(Role.ADMIN))]
@@ -132,3 +138,42 @@ async def read_document(
     session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> KnowledgeDocument:
     return await get_knowledge_document(session, knowledge_base_id, document_id)
+
+
+@router.post("/{knowledge_base_id}/questions", response_model=KnowledgeQueryRead)
+async def ask_question(
+    knowledge_base_id: int,
+    payload: KnowledgeQuestionCreate,
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    actor: Annotated[User, Depends(get_current_user)],
+) -> KnowledgeQuery:
+    settings: Settings = request.app.state.settings
+    return await answer_knowledge_question(
+        session, knowledge_base_id, actor.id, payload, settings
+    )
+
+
+@router.get("/{knowledge_base_id}/questions", response_model=KnowledgeQueryPage)
+async def read_questions(
+    knowledge_base_id: int,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> KnowledgeQueryPage:
+    items, total = await list_knowledge_queries(session, knowledge_base_id, page, page_size)
+    return KnowledgeQueryPage(
+        items=[KnowledgeQueryRead.model_validate(item) for item in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/{knowledge_base_id}/questions/{query_id}", response_model=KnowledgeQueryRead)
+async def read_question(
+    knowledge_base_id: int,
+    query_id: int,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> KnowledgeQuery:
+    return await get_knowledge_query(session, knowledge_base_id, query_id)

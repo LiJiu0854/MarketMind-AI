@@ -1,11 +1,13 @@
 """Knowledge-base rows and safe local upload staging."""
 
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import UploadFile
 from sqlalchemy import func, select
@@ -14,9 +16,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentStatus
+from app.models.knowledge import (
+    KnowledgeBase,
+    KnowledgeDocument,
+    KnowledgeDocumentStatus,
+    KnowledgeQuery,
+    KnowledgeQueryStatus,
+)
 from app.schemas.knowledge import KnowledgeBaseCreate
 from app.services.document_ingestion import DocumentIngestionError
+
+if TYPE_CHECKING:
+    from app.services.rag import RAGCompletion
 
 _MEDIA_TYPES: dict[str, set[str]] = {
     ".pdf": {"application/pdf"},
@@ -312,6 +323,104 @@ async def list_knowledge_documents(
             select(KnowledgeDocument)
             .where(KnowledgeDocument.knowledge_base_id == knowledge_base_id)
             .order_by(KnowledgeDocument.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return list(items), total
+
+
+async def create_query_history(
+    session: AsyncSession,
+    knowledge_base_id: int,
+    asked_by_id: int,
+    question: str,
+    provider: str,
+    model: str,
+    completion: RAGCompletion,
+) -> KnowledgeQuery:
+    from app.services.rag import RAG_PROMPT_VERSION
+
+    query = KnowledgeQuery(
+        knowledge_base_id=knowledge_base_id,
+        asked_by_id=asked_by_id,
+        question=question,
+        status=completion.status,
+        answer=completion.answer,
+        citations=[citation.model_dump(mode="json") for citation in completion.citations],
+        provider=provider,
+        model=model,
+        prompt_version=RAG_PROMPT_VERSION,
+        embedding_tokens=completion.embedding_tokens,
+        prompt_tokens=completion.prompt_tokens,
+        completion_tokens=completion.completion_tokens,
+        total_tokens=completion.total_tokens,
+    )
+    session.add(query)
+    await session.commit()
+    await session.refresh(query)
+    return query
+
+
+async def create_query_failure(
+    session: AsyncSession,
+    knowledge_base_id: int,
+    asked_by_id: int,
+    question: str,
+    provider: str,
+    model: str,
+    code: str,
+    message: str,
+) -> KnowledgeQuery:
+    from app.services.rag import RAG_PROMPT_VERSION
+
+    query = KnowledgeQuery(
+        knowledge_base_id=knowledge_base_id,
+        asked_by_id=asked_by_id,
+        question=question,
+        status=KnowledgeQueryStatus.FAILURE,
+        answer=None,
+        citations=[],
+        provider=provider,
+        model=model,
+        prompt_version=RAG_PROMPT_VERSION,
+        error_code=code,
+        error_message=message,
+    )
+    session.add(query)
+    await session.commit()
+    await session.refresh(query)
+    return query
+
+
+async def get_knowledge_query(
+    session: AsyncSession, knowledge_base_id: int, query_id: int
+) -> KnowledgeQuery:
+    query = await session.scalar(
+        select(KnowledgeQuery).where(
+            KnowledgeQuery.id == query_id,
+            KnowledgeQuery.knowledge_base_id == knowledge_base_id,
+        )
+    )
+    if query is None:
+        raise AppError("KNOWLEDGE_QUERY_NOT_FOUND", "问答记录不存在", 404)
+    return query
+
+
+async def list_knowledge_queries(
+    session: AsyncSession, knowledge_base_id: int, page: int, page_size: int
+) -> tuple[list[KnowledgeQuery], int]:
+    await get_knowledge_base(session, knowledge_base_id)
+    total = await session.scalar(
+        select(func.count()).select_from(KnowledgeQuery).where(
+            KnowledgeQuery.knowledge_base_id == knowledge_base_id
+        )
+    ) or 0
+    items = (
+        await session.scalars(
+            select(KnowledgeQuery)
+            .where(KnowledgeQuery.knowledge_base_id == knowledge_base_id)
+            .order_by(KnowledgeQuery.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )

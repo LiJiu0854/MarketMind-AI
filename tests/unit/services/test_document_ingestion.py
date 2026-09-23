@@ -234,3 +234,17 @@ async def test_retry_after_partial_chroma_write_converges() -> None:
     await index_document_vectors(client, base, document, chunks, embeddings)
     assert collection.delete.await_count == 2
     assert collection.upsert.call_args.kwargs["ids"] == ["document:7:chunk:0"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_embedding_client_configuration_is_safely_mapped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid_client(**kwargs: object) -> object:
+        raise ValueError("private embedding URL")
+
+    monkeypatch.setattr("app.services.document_ingestion.AsyncOpenAI", invalid_client)
+    with pytest.raises(DocumentIngestionError) as failure:
+        await request_embeddings(["question"], embedding_settings())
+    assert failure.value.code == "DOCUMENT_CONFIG_ERROR"
+    assert "private" not in failure.value.message

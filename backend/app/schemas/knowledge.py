@@ -112,7 +112,16 @@ class RAGModelResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answer: str = Field(min_length=1, max_length=5_000)
-    citation_indices: list[int] = Field(max_length=10)
+    cited_chunk_numbers: list[int] = Field(max_length=10)
+    refused: bool
+
+    @field_validator("answer")
+    @classmethod
+    def trim_answer(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("answer must not be blank")
+        return value
 
 
 class KnowledgeCitation(BaseModel):

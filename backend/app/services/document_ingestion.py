@@ -148,12 +148,17 @@ async def request_embeddings(texts: Sequence[str], settings: Settings) -> Embedd
         raise DocumentIngestionError(
             "EMBEDDING_INVALID_RESPONSE", "Embedding 输入无效", retryable=False
         )
-    client = AsyncOpenAI(
-        api_key=settings.embedding_api_key.get_secret_value(),
-        base_url=settings.embedding_base_url,
-        timeout=settings.embedding_timeout_seconds,
-        max_retries=0,
-    )
+    try:
+        client = AsyncOpenAI(
+            api_key=settings.embedding_api_key.get_secret_value(),
+            base_url=settings.embedding_base_url,
+            timeout=settings.embedding_timeout_seconds,
+            max_retries=0,
+        )
+    except (TypeError, ValueError):
+        raise DocumentIngestionError(
+            "DOCUMENT_CONFIG_ERROR", "Embedding 配置无效", retryable=False
+        ) from None
     vectors: list[list[float]] = []
     dimensions: int | None = None
     total_tokens = 0
