@@ -24,6 +24,23 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "LLM_API_KEY",
     "LLM_TIMEOUT_SECONDS",
     "LLM_MAX_OUTPUT_TOKENS",
+    "KNOWLEDGE_FILE_ROOT",
+    "KNOWLEDGE_MAX_FILE_BYTES",
+    "RAG_CHUNK_SIZE",
+    "RAG_CHUNK_OVERLAP",
+    "RAG_TOP_K",
+    "RAG_MAX_DISTANCE",
+    "CHROMA_HOST",
+    "CHROMA_PORT",
+    "CHROMA_SSL",
+    "CHROMA_TENANT",
+    "CHROMA_DATABASE",
+    "EMBEDDING_PROVIDER",
+    "EMBEDDING_BASE_URL",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_API_KEY",
+    "EMBEDDING_TIMEOUT_SECONDS",
+    "EMBEDDING_BATCH_SIZE",
     "TEST_DATABASE_URL",
     "REDIS_URL",
     "TEST_REDIS_URL",
@@ -69,6 +86,27 @@ def test_llm_settings_have_portable_safe_defaults() -> None:
     assert settings.llm_api_key is None
     assert settings.llm_timeout_seconds == 60
     assert settings.llm_max_output_tokens == 2_000
+
+
+def test_rag_config_has_safe_local_defaults() -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.knowledge_file_root == Path("data/knowledge")
+    assert settings.knowledge_max_file_bytes == 10 * 1024 * 1024
+    assert settings.rag_chunk_size == 1_000
+    assert settings.rag_chunk_overlap == 150
+    assert settings.rag_top_k == 5
+    assert settings.rag_max_distance == 0.35
+    assert settings.embedding_api_key is None
+
+
+def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:
+    with pytest.raises(ValidationError):
+        Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            rag_chunk_size=100,
+            rag_chunk_overlap=100,
+        )
 
 
 def test_settings_read_and_convert_environment_variables(

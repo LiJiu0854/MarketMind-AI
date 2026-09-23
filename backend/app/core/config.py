@@ -1,6 +1,9 @@
 """类型化应用配置。"""
 
-from pydantic import Field, SecretStr, field_validator
+from pathlib import Path
+from typing import Self
+
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,8 +46,33 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     llm_timeout_seconds: int = Field(default=60, gt=0)
     llm_max_output_tokens: int = Field(default=2_000, gt=0)
+    knowledge_file_root: Path = Path("data/knowledge")
+    knowledge_max_file_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    rag_chunk_size: int = Field(default=1_000, gt=0)
+    rag_chunk_overlap: int = Field(default=150, ge=0)
+    rag_top_k: int = Field(default=5, ge=1, le=10)
+    rag_max_distance: float = Field(default=0.35, ge=0, le=2)
+    chroma_host: str = "127.0.0.1"
+    chroma_port: int = Field(default=8_000, ge=1, le=65_535)
+    chroma_ssl: bool = False
+    chroma_tenant: str = "default_tenant"
+    chroma_database: str = "default_database"
+    embedding_provider: str = "openai"
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_model: str | None = None
+    embedding_api_key: SecretStr | None = None
+    embedding_timeout_seconds: int = Field(default=60, gt=0)
+    embedding_batch_size: int = Field(default=64, gt=0, le=2_048)
 
-    @field_validator("llm_provider", "llm_base_url")
+    @field_validator(
+        "llm_provider",
+        "llm_base_url",
+        "chroma_host",
+        "chroma_tenant",
+        "chroma_database",
+        "embedding_provider",
+        "embedding_base_url",
+    )
     @classmethod
     def validate_required_llm_text(cls, value: str) -> str:
         value = value.strip()
@@ -52,14 +80,14 @@ class Settings(BaseSettings):
             raise ValueError("LLM 配置不能为空")
         return value
 
-    @field_validator("llm_model")
+    @field_validator("llm_model", "embedding_model")
     @classmethod
     def normalize_optional_llm_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return value.strip() or None
 
-    @field_validator("llm_api_key")
+    @field_validator("llm_api_key", "embedding_api_key")
     @classmethod
     def normalize_optional_llm_secret(
         cls,
@@ -69,3 +97,9 @@ class Settings(BaseSettings):
             return None
         secret = value.get_secret_value().strip()
         return SecretStr(secret) if secret else None
+
+    @model_validator(mode="after")
+    def validate_chunk_overlap(self) -> Self:
+        if self.rag_chunk_overlap >= self.rag_chunk_size:
+            raise ValueError("RAG 分块重叠必须小于分块大小")
+        return self

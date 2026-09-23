@@ -30,3 +30,6 @@ Thumbs.db
 
 # 其他文件
 *.log
+
+# Uploaded knowledge-base files
+data/knowledge/

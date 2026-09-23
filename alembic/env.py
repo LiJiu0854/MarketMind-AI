@@ -8,7 +8,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import Settings
 from app.db.base import Base
-from app.models import Product, SemanticReview, User  # noqa: F401
+from app.models import (  # noqa: F401
+    KnowledgeBase,
+    KnowledgeDocument,
+    KnowledgeQuery,
+    Product,
+    SemanticReview,
+    User,
+)
 
 config = context.config
 
