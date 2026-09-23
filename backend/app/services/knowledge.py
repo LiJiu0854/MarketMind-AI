@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.core.errors import AppError
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentStatus
 from app.schemas.knowledge import KnowledgeBaseCreate
+from app.services.document_ingestion import DocumentIngestionError
 
 _MEDIA_TYPES: dict[str, set[str]] = {
     ".pdf": {"application/pdf"},
@@ -189,10 +190,88 @@ async def stage_knowledge_document(
 async def mark_document_dispatch_failure(session: AsyncSession, document_id: int) -> None:
     document = await session.get_one(KnowledgeDocument, document_id)
     document.status = KnowledgeDocumentStatus.FAILURE
-    document.error_code = "DOCUMENT_DISPATCH_FAILED"
+    document.error_code = "DOCUMENT_INTERNAL_ERROR"
     document.error_message = "文档索引任务投递失败"
     document.completed_at = datetime.now(UTC)
     await session.commit()
+
+
+async def mark_document_processing(
+    session: AsyncSession, document_id: int
+) -> tuple[KnowledgeDocument, KnowledgeBase] | None:
+    document = await session.scalar(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .with_for_update()
+    )
+    if document is None or document.status in (
+        KnowledgeDocumentStatus.READY,
+        KnowledgeDocumentStatus.FAILURE,
+    ):
+        return None
+    base = await session.get_one(KnowledgeBase, document.knowledge_base_id)
+    document.status = KnowledgeDocumentStatus.PROCESSING
+    if document.started_at is None:
+        document.started_at = datetime.now(UTC)
+    await session.commit()
+    return document, base
+
+
+async def mark_document_ready(
+    session: AsyncSession,
+    document_id: int,
+    chunk_count: int,
+    embedding_tokens: int | None,
+    embedding_dimensions: int,
+) -> KnowledgeDocument | None:
+    document = await session.scalar(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .with_for_update()
+    )
+    if document is None or document.status is not KnowledgeDocumentStatus.PROCESSING:
+        return None
+    base = await session.scalar(
+        select(KnowledgeBase)
+        .where(KnowledgeBase.id == document.knowledge_base_id)
+        .with_for_update()
+    )
+    if base is None:
+        raise AppError("KNOWLEDGE_BASE_NOT_FOUND", "知识库不存在", 404)
+    if base.embedding_dimensions is not None and base.embedding_dimensions != embedding_dimensions:
+        raise DocumentIngestionError(
+            "DOCUMENT_CONFIG_ERROR", "Embedding 向量维度与知识库不一致", retryable=False
+        )
+    base.embedding_dimensions = embedding_dimensions
+    document.status = KnowledgeDocumentStatus.READY
+    document.chunk_count = chunk_count
+    document.embedding_tokens = embedding_tokens
+    document.error_code = None
+    document.error_message = None
+    document.completed_at = datetime.now(UTC)
+    await session.commit()
+    return document
+
+
+async def mark_document_failure(
+    session: AsyncSession, document_id: int, code: str, message: str
+) -> KnowledgeDocument | None:
+    document = await session.scalar(
+        select(KnowledgeDocument)
+        .where(KnowledgeDocument.id == document_id)
+        .with_for_update()
+    )
+    if document is None or document.status in (
+        KnowledgeDocumentStatus.READY,
+        KnowledgeDocumentStatus.FAILURE,
+    ):
+        return None
+    document.status = KnowledgeDocumentStatus.FAILURE
+    document.error_code = code
+    document.error_message = message
+    document.completed_at = datetime.now(UTC)
+    await session.commit()
+    return document
 
 
 async def attach_document_task_id(

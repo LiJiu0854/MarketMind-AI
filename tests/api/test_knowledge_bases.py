@@ -1,17 +1,25 @@
 """Knowledge-base management and RBAC HTTP tests."""
 
 from collections.abc import AsyncIterator
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from kombu.exceptions import (  # type: ignore[import-untyped]
+    OperationalError as BrokerOperationalError,
+)
 from pydantic import SecretStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db_session
 from app.core.config import Settings
 from app.core.security import create_access_token
 from app.main import create_app
+from app.models.knowledge import KnowledgeDocument, KnowledgeDocumentStatus
 from app.models.user import Role, User
 from app.schemas.user import UserCreate
 from app.services.users import create_user
@@ -25,13 +33,15 @@ def jwt_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest_asyncio.fixture
-async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+async def client(session: AsyncSession, tmp_path: Path) -> AsyncIterator[AsyncClient]:
     app = create_app(
         Settings(
             embedding_provider="test",
             embedding_base_url="https://provider.invalid/v1",
             embedding_model="embedding-test",
             embedding_api_key=SecretStr("test-only-key"),
+            knowledge_file_root=tmp_path,
+            knowledge_max_file_bytes=16,
         )
     )
 
@@ -105,9 +115,7 @@ async def test_all_roles_can_list_and_read_knowledge_bases(
     base_id = created.json()["id"]
 
     listing = await client.get("/api/v1/knowledge-bases", headers=auth_headers(actor))
-    detail = await client.get(
-        f"/api/v1/knowledge-bases/{base_id}", headers=auth_headers(actor)
-    )
+    detail = await client.get(f"/api/v1/knowledge-bases/{base_id}", headers=auth_headers(actor))
     documents = await client.get(
         f"/api/v1/knowledge-bases/{base_id}/documents", headers=auth_headers(actor)
     )
@@ -136,9 +144,7 @@ async def test_duplicate_name_returns_stable_409(
 @pytest.mark.asyncio
 async def test_missing_base_returns_stable_404(client: AsyncClient, session: AsyncSession) -> None:
     actor = await make_actor(session, Role.ANALYST, "missing")
-    response = await client.get(
-        "/api/v1/knowledge-bases/999999", headers=auth_headers(actor)
-    )
+    response = await client.get("/api/v1/knowledge-bases/999999", headers=auth_headers(actor))
     assert response.status_code == 404
     assert response.json()["code"] == "KNOWLEDGE_BASE_NOT_FOUND"
 
@@ -146,3 +152,141 @@ async def test_missing_base_returns_stable_404(client: AsyncClient, session: Asy
 @pytest.mark.asyncio
 async def test_unauthenticated_management_request_returns_401(client: AsyncClient) -> None:
     assert (await client.get("/api/v1/knowledge-bases")).status_code == 401
+
+
+async def make_base(client: AsyncClient, actor: User, name: str = "Upload base") -> int:
+    response = await client.post(
+        "/api/v1/knowledge-bases", json={"name": name}, headers=auth_headers(actor)
+    )
+    assert response.status_code == 201
+    return int(response.json()["id"])
+
+
+@pytest.mark.asyncio
+async def test_admin_upload_returns_202_document_task_and_pending_status(
+    client: AsyncClient,
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    actor = await make_actor(session, Role.ADMIN, "upload")
+    base_id = await make_base(client, actor)
+    delay = Mock(return_value=SimpleNamespace(id="task-123"))
+    embedding_client = Mock(side_effect=AssertionError("upload must not call Embedding"))
+    monkeypatch.setattr("app.api.v1.knowledge_bases.index_knowledge_document.delay", delay)
+    monkeypatch.setattr("app.services.document_ingestion.AsyncOpenAI", embedding_client)
+
+    response = await client.post(
+        f"/api/v1/knowledge-bases/{base_id}/documents",
+        files={"file": ("../../notes.txt", b"hello", "text/plain")},
+        headers=auth_headers(actor),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["task_id"] == "task-123"
+    assert response.json()["status"] == "pending"
+    document = await session.get_one(KnowledgeDocument, response.json()["document_id"])
+    assert document.original_name == "notes.txt"
+    assert document.status is KnowledgeDocumentStatus.PENDING
+    assert (tmp_path / document.storage_path).read_bytes() == b"hello"
+    delay.assert_called_once_with(document.id)
+    embedding_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [Role.OPERATOR, Role.ANALYST])
+async def test_non_admin_upload_is_forbidden(
+    client: AsyncClient, session: AsyncSession, role: Role
+) -> None:
+    admin = await make_actor(session, Role.ADMIN, f"owner-{role.value}")
+    base_id = await make_base(client, admin)
+    actor = await make_actor(session, role, f"upload-{role.value}")
+    response = await client.post(
+        f"/api/v1/knowledge-bases/{base_id}/documents",
+        files={"file": ("notes.txt", b"hello", "text/plain")},
+        headers=auth_headers(actor),
+    )
+    assert response.status_code == 403
+    assert (await session.scalars(select(KnowledgeDocument))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_oversized_file_with_413(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    actor = await make_actor(session, Role.ADMIN, "too-large")
+    base_id = await make_base(client, actor)
+    response = await client.post(
+        f"/api/v1/knowledge-bases/{base_id}/documents",
+        files={"file": ("notes.txt", b"x" * 17, "text/plain")},
+        headers=auth_headers(actor),
+    )
+    assert response.status_code == 413
+    assert response.json()["code"] == "KNOWLEDGE_FILE_TOO_LARGE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file",
+    [
+        ("notes.exe", b"hello", "text/plain"),
+        ("notes.pdf", b"hello", "application/pdf"),
+        ("notes.txt", b"hello", "application/pdf"),
+        ("notes.txt", b"\xff", "text/plain"),
+    ],
+)
+async def test_upload_rejects_invalid_extension_content_type_or_bytes_with_422(
+    client: AsyncClient, session: AsyncSession, file: tuple[str, bytes, str]
+) -> None:
+    actor = await make_actor(session, Role.ADMIN, "invalid")
+    base_id = await make_base(client, actor)
+    response = await client.post(
+        f"/api/v1/knowledge-bases/{base_id}/documents",
+        files={"file": file},
+        headers=auth_headers(actor),
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "KNOWLEDGE_FILE_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_file_returns_409(
+    client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor = await make_actor(session, Role.ADMIN, "duplicate-file")
+    base_id = await make_base(client, actor)
+    monkeypatch.setattr(
+        "app.api.v1.knowledge_bases.index_knowledge_document.delay",
+        Mock(return_value=SimpleNamespace(id="task-duplicate")),
+    )
+    url = f"/api/v1/knowledge-bases/{base_id}/documents"
+    files = {"file": ("notes.txt", b"hello", "text/plain")}
+    assert (await client.post(url, files=files, headers=auth_headers(actor))).status_code == 202
+    second = await client.post(url, files=files, headers=auth_headers(actor))
+    assert second.status_code == 409
+    assert second.json()["code"] == "KNOWLEDGE_DOCUMENT_DUPLICATE"
+
+
+@pytest.mark.asyncio
+async def test_broker_failure_marks_document_failure_and_returns_503(
+    client: AsyncClient,
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actor = await make_actor(session, Role.ADMIN, "broker-fail")
+    base_id = await make_base(client, actor)
+    monkeypatch.setattr(
+        "app.api.v1.knowledge_bases.index_knowledge_document.delay",
+        Mock(side_effect=BrokerOperationalError("private broker URL")),
+    )
+    response = await client.post(
+        f"/api/v1/knowledge-bases/{base_id}/documents",
+        files={"file": ("notes.txt", b"hello", "text/plain")},
+        headers=auth_headers(actor),
+    )
+    assert response.status_code == 503
+    assert response.json()["code"] == "KNOWLEDGE_DOCUMENT_DISPATCH_FAILED"
+    assert "private" not in response.text
+    document = (await session.scalars(select(KnowledgeDocument))).one()
+    assert document.status is KnowledgeDocumentStatus.FAILURE
+    assert document.error_code == "DOCUMENT_INTERNAL_ERROR"

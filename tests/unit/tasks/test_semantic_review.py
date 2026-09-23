@@ -660,10 +660,11 @@ def test_generate_task_delegates_to_testable_runner(
     runner.assert_called_once()
 
 
-def test_celery_app_registers_both_task_modules() -> None:
+def test_celery_app_registers_task_modules() -> None:
     app = create_celery_app(worker_settings())
 
     assert app.conf.include == [
         "app.tasks.user_stats",
         "app.tasks.semantic_review",
+        "app.tasks.knowledge",
     ]
