@@ -90,8 +90,16 @@ async def search_knowledge(
         await session.rollback()
     try:
         embedding = await request_embeddings([query], settings)
-    except DocumentIngestionError:
-        raise AppError("RESEARCH_EMBEDDING_FAILED", "Embedding 服务不可用", 503) from None
+    except DocumentIngestionError as error:
+        raise AppError(
+            "RESEARCH_EMBEDDING_UNAVAILABLE"
+            if error.retryable
+            else "RESEARCH_EMBEDDING_CONFIG_ERROR",
+            "Embedding 服务暂时不可用"
+            if error.retryable
+            else "Embedding 配置或响应无效",
+            503,
+        ) from None
     if base.embedding_dimensions is not None and base.embedding_dimensions != embedding.dimensions:
         raise AppError("RESEARCH_EMBEDDING_CONFIG_MISMATCH", "Embedding 维度不一致", 503)
     try:
@@ -133,7 +141,13 @@ async def search_knowledge(
         return ToolResult(evidence=evidence, embedding_tokens=embedding.total_tokens)
     except RAGCallError as error:
         raise AppError(
-            "RESEARCH_SEARCH_UNAVAILABLE", "向量检索服务不可用", error.status_code
+            "RESEARCH_SEARCH_INVALID_RESPONSE"
+            if error.code == "RAG_INVALID_RESPONSE"
+            else "RESEARCH_SEARCH_UNAVAILABLE",
+            "向量检索结果无效"
+            if error.code == "RAG_INVALID_RESPONSE"
+            else "向量检索服务不可用",
+            error.status_code,
         ) from None
     finally:
         await session.rollback()

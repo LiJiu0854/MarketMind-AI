@@ -16,6 +16,7 @@ from app.api.dependencies import get_db_session
 from app.core.config import Settings
 from app.core.security import create_access_token
 from app.main import create_app
+from app.models.knowledge import KnowledgeDocument, KnowledgeDocumentStatus
 from app.models.research import ResearchRun, ResearchStatus
 from app.models.user import Role, User
 from app.schemas.research import ResearchCreate
@@ -195,3 +196,53 @@ async def test_history_readable_to_all_roles_but_product_scoped(
             headers=headers(reader),
         )
         assert wrong.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_unready_knowledge_returns_conflict_before_dispatch(
+    client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "unready-api")
+    manager = await session.get_one(User, actor_id)
+    document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base_id)
+    )
+    assert document is not None
+    document.status = KnowledgeDocumentStatus.FAILURE
+    await session.commit()
+    sent = Mock()
+    monkeypatch.setattr("app.api.v1.research.celery_app.send_task", sent)
+    response = await client.post(
+        f"/api/v1/products/{product_id}/research-runs",
+        json={"goal": "Compare", "knowledge_base_ids": [base_id]},
+        headers=headers(manager),
+    )
+    assert response.status_code == 409
+    sent.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_missing_model_config_returns_503_before_dispatch(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "config-api")
+    manager = await session.get_one(User, actor_id)
+    app = create_app(configured_settings().model_copy(update={"llm_model": None}))
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        yield session
+
+    app.dependency_overrides[get_db_session] = override_session
+    sent = Mock()
+    monkeypatch.setattr("app.api.v1.research.celery_app.send_task", sent)
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            f"/api/v1/products/{product_id}/research-runs",
+            json={"goal": "Compare", "knowledge_base_ids": [base_id]},
+            headers=headers(manager),
+        )
+    assert response.status_code == 503
+    sent.assert_not_called()

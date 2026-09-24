@@ -667,4 +667,5 @@ def test_celery_app_registers_task_modules() -> None:
         "app.tasks.user_stats",
         "app.tasks.semantic_review",
         "app.tasks.knowledge",
+        "app.tasks.research",
     ]

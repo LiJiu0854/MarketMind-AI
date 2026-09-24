@@ -2,6 +2,7 @@
 
 import asyncio
 from decimal import Decimal
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,7 +18,7 @@ from app.models.research import ResearchRun, ResearchStatus
 from app.models.user import Role
 from app.schemas.knowledge import RetrievedChunk
 from app.schemas.product import ProductCreate
-from app.schemas.research import ResearchAction, ResearchCreate
+from app.schemas.research import ResearchAction, ResearchCreate, ResearchEvidence
 from app.schemas.user import UserCreate
 from app.services.document_ingestion import EmbeddingCompletion
 from app.services.products import create_product
@@ -28,8 +29,15 @@ from app.services.research import (
     get_research_run,
     list_research_runs,
     mark_research_running,
+    mark_research_success,
+    set_research_task_id,
 )
-from app.services.research_agent import ActionCompletion, run_research_actions
+from app.services.research_agent import (
+    ActionCompletion,
+    ReportCompletion,
+    complete_research_report,
+    run_research_actions,
+)
 from app.services.research_tools import search_knowledge
 from app.services.users import create_user
 
@@ -399,3 +407,193 @@ async def test_action_loop_resumes_after_committed_finish_without_repeating_tool
     assert second is not None
     assert len(second.steps) == 2
     assert decisions.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_success_persists_verified_report_and_preserves_usage(
+    session: AsyncSession,
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "success")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    saved = await mark_research_success(
+        session,
+        run.id,
+        {
+            "outcome": "insufficient_evidence",
+            "summary": "资料不足",
+            "findings": [],
+            "recommendations": [],
+            "evidence_gaps": ["缺竞品资料"],
+        },
+        ResearchUsage(prompt_tokens=0, completion_tokens=0, embedding_tokens=0),
+    )
+    assert saved is not None
+    assert saved.status is ResearchStatus.SUCCESS
+    assert saved.report is not None
+    assert saved.report["outcome"] == "insufficient_evidence"
+    assert saved.completed_at is not None
+    assert await mark_research_running(session, run.id) is None
+    assert (
+        await mark_research_success(
+            session, run.id, {"outcome": "supported"}, ResearchUsage(1, 1, 0)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_insufficient_evidence_skips_report_model(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "insufficient")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    product_source = ResearchEvidence(
+        source_id=f"product:{product_id}:snapshot",
+        source_type="product",
+        product_id=product_id,
+        text="商品快照",
+    )
+    await append_research_step(
+        session,
+        run.id,
+        {"number": 1, "action": {"action": "finish"}, "source_ids": []},
+        [product_source],
+        ResearchUsage(3, 1, 0),
+    )
+    report_call = AsyncMock()
+    monkeypatch.setattr("app.services.research_agent.request_research_report", report_call)
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    result = await complete_research_report(run.id, sessions, settings())
+    assert result is not None
+    assert result.status is ResearchStatus.SUCCESS
+    assert result.report is not None
+    assert result.report["outcome"] == "insufficient_evidence"
+    assert result.total_tokens == 4
+    report_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_supported_report_is_saved_after_model_validation(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "supported")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base_id)
+    )
+    assert document is not None
+    source = ResearchEvidence(
+        source_id=f"kb:{base_id}:document:{document.id}:chunk:0",
+        source_type="knowledge",
+        knowledge_base_id=base_id,
+        document_id=document.id,
+        chunk_id=f"document:{document.id}:chunk:0",
+        chunk_index=0,
+        original_name="source.txt",
+        text="verified",
+        distance=0.1,
+    )
+    product_source = ResearchEvidence(
+        source_id=f"product:{product_id}:snapshot",
+        source_type="product",
+        product_id=product_id,
+        text="商品快照",
+    )
+    await append_research_step(
+        session,
+        run.id,
+        {"number": 1, "action": {"action": "finish"}, "source_ids": []},
+        [product_source, source],
+        ResearchUsage(3, 1, 5),
+    )
+    mocked = AsyncMock(
+        return_value=ReportCompletion(
+            {
+                "outcome": "supported",
+                "summary": "Evidence",
+                "findings": [
+                    {
+                        "claim": "Finding",
+                        "source_ids": [source.source_id],
+                        "citations": [{"original_name": "source.txt"}],
+                    }
+                ],
+                "recommendations": [],
+                "evidence_gaps": [],
+            },
+            2,
+            1,
+        )
+    )
+    monkeypatch.setattr("app.services.research_agent.request_research_report", mocked)
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    result = await complete_research_report(run.id, sessions, settings())
+    assert result is not None
+    assert result.report is not None
+    saved_report = cast(dict[str, Any], result.report)
+    assert saved_report["findings"][0]["citations"][0]["original_name"] == "source.txt"
+    assert result.total_tokens == 12
+    mocked.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fast_worker_still_allows_dispatch_receipt(
+    session: AsyncSession,
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "fast-worker")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    updated = await set_research_task_id(session, run.id, "task-fast")
+    assert updated.celery_task_id == "task-fast"
+
+
+@pytest.mark.asyncio
+async def test_oversized_product_snapshot_is_rejected_before_model_cost(
+    session: AsyncSession,
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "oversized")
+    product = await session.get_one(Product, product_id)
+    product.description = "x" * 25_000
+    await session.commit()
+    with pytest.raises(AppError) as failure:
+        await create_research_run(
+            session, product_id, actor_id,
+            ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+            settings(),
+        )
+    assert failure.value.status_code == 422

@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -10,6 +11,7 @@ from pydantic import SecretStr
 
 import app.tasks.research as research_task
 from app.core.config import Settings
+from app.core.errors import AppError
 from app.services.research_agent import ResearchCallError
 
 
@@ -112,7 +114,48 @@ def test_permanent_error_fails_without_retry(
     persist.assert_awaited_once()
 
 
+def test_configuration_drift_is_not_retried_and_keeps_stable_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = AppError(
+        "RESEARCH_EMBEDDING_CONFIG_MISMATCH", "Embedding 配置不一致", 503
+    )
+    monkeypatch.setattr(research_task, "run_research_attempt", AsyncMock(side_effect=error))
+    persist = AsyncMock()
+    monkeypatch.setattr(research_task, "persist_research_failure", persist)
+    task = Mock()
+    task.request.retries = 0
+    result = research_task.run_research_task(task, 7)
+    assert result["status"] == "failure"
+    task.retry.assert_not_called()
+    persist.assert_awaited_once_with(7, error.code, error.message)
+
+
 def test_celery_registration_is_late_ack() -> None:
     assert research_task.run_research.name == "app.tasks.research.run_research"
     assert research_task.run_research.acks_late
     assert research_task.run_research.max_retries == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_completes_report_after_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_resources(monkeypatch)
+    monkeypatch.setattr(
+        research_task,
+        "mark_research_running",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                provider="test", model="research-model", prompt_version="research-v1"
+            )
+        ),
+    )
+    actions = AsyncMock(return_value=object())
+    report = AsyncMock(return_value=SimpleNamespace(status="success"))
+    monkeypatch.setattr(research_task, "run_research_actions", actions)
+    monkeypatch.setattr(research_task, "complete_research_report", report)
+    result = await research_task.run_research_attempt(7)
+    assert result == {"run_id": 7, "status": "success"}
+    actions.assert_awaited_once()
+    report.assert_awaited_once()

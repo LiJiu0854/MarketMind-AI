@@ -2,9 +2,10 @@
 
 MarketMind AI 是面向电商运营团队的 AI 商品运营与竞品研究平台。
 
-当前已完成阶段 5 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
+当前已完成阶段 6 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
 同步导入、确定性 Listing 检查和筛选导出，以及异步 LLM Listing 语义审核与
-MySQL 历史持久化；另有 PDF/MD/TXT 知识库、异步向量索引和带来源引用的 RAG 问答。
+MySQL 历史持久化；另有 PDF/MD/TXT 知识库、异步向量索引、带来源引用的 RAG 问答，
+以及基于已上传资料的受控竞品研究。
 
 ## 环境要求
 
@@ -47,6 +48,9 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 - `POST /products/{product_id}/semantic-reviews`：Admin、Operator 发起异步语义审核；
 - `GET /products/{product_id}/semantic-reviews`：三种角色分页查看 MySQL 审核历史；
 - `GET /products/{product_id}/semantic-reviews/{review_id}`：三种角色查看结构化结果。
+- `POST /products/{product_id}/research-runs`：Admin、Operator 发起受控研究，返回 `202` 与 `run_id/task_id/status`；
+- `GET /products/{product_id}/research-runs`：三种角色分页查看 MySQL 研究历史；
+- `GET /products/{product_id}/research-runs/{run_id}`：三种角色读取状态、步骤、证据、报告与 Token 用量。
 
 导入和导出只使用请求内存，不保存工作簿文件。导入允许合法行成功、错误行返回稳定错误；并发 SKU 冲突会整体回滚。
 
@@ -68,8 +72,29 @@ Windows 本地启动 Celery Worker：
 .venv\Scripts\celery.exe -A app.celery_app.celery_app worker --loglevel=INFO --pool=solo
 ```
 
-Worker 使用 Redis 锁避免同一审核或文档并行执行，模型结果、错误摘要和 Token 用量最终写入
+Worker 使用 Redis 锁避免同一审核、文档或研究并行执行，模型结果、错误摘要和 Token 用量最终写入
 MySQL。自动化测试会 Mock 模型 SDK，不产生真实模型费用。
+
+## 受控竞品研究（单元 6）
+
+先由 Admin 上传竞品公开资料或内部市场资料至单元 5 知识库，并等待至少一份文档成为
+`ready`。Admin/Operator 再为一个商品选择 1～3 个知识库，提交 1～500 字符研究目标；
+同一商品不能同时运行两项研究。提交前必须完成 `0005` 迁移，并启动 MySQL、Redis、
+Celery Worker 和 Chroma；知识库 Embedding 配置须与当前运行配置一致。
+
+Worker 只允许模型选择 `read_product`、`search_knowledge`、`finish` 三个动作；
+最多默认 4 次决定，并最多登记 12 条证据。每步写入 MySQL 检查点。检索来源会核对
+知识库范围、MySQL 文档归属与 `ready` 状态；报告每项发现/建议的来源 ID 必须来自本次
+登记的知识库证据，文件名、页码和摘录由程序回填。没有可靠知识库证据时直接生成
+`insufficient_evidence`，不会调用报告模型。客户端轮询研究详情即可读取
+`pending/running/success/failure`，不依赖 Celery 结果缓存。
+
+`RESEARCH_MAX_ACTIONS`（2～8）和 `RESEARCH_MAX_EVIDENCE`（2～30）控制动作与证据预算；
+一次动作可能调用 Chat，知识库检索还可能调用 Embedding，证据充分时报告另调用一次
+Chat，因此应按模型计费规则评估上限。切换模型仍配置 `LLM_*` 和 `EMBEDDING_*`，
+保持 OpenAI-compatible API 与 JSON Mode 支持；研究不会实时联网抓取竞品，
+结论只反映管理员已上传且通过核验的资料，不能当作未经复核的市场事实。
+自动化测试中的模型与 Chroma 均为模拟；尚未进行产生真实费用的人工验收。
 
 ## RAG 知识库（单元 5）
 

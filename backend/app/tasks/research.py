@@ -13,7 +13,11 @@ from app.db.redis import close_redis_client, create_redis_client
 from app.db.session import create_engine, create_session_factory
 from app.services.redis_guards import redis_lock
 from app.services.research import PROMPT_VERSION, mark_research_failure, mark_research_running
-from app.services.research_agent import ResearchCallError, run_research_actions
+from app.services.research_agent import (
+    ResearchCallError,
+    complete_research_report,
+    run_research_actions,
+)
 
 RESEARCH_LOCK_PREFIX = "marketmind:lock:research"
 MAX_RESEARCH_RETRIES = 2
@@ -57,9 +61,12 @@ async def run_research_attempt(run_id: int) -> dict[str, int | str]:
                         retryable=False,
                     )
                 result = await run_research_actions(run_id, sessions, settings)
+                if result is None:
+                    return {"run_id": run_id, "status": "ignored"}
+                saved = await complete_research_report(run_id, sessions, settings)
                 return {
                     "run_id": run_id,
-                    "status": "awaiting_report" if result is not None else "ignored",
+                    "status": "success" if saved is not None else "ignored",
                 }
         finally:
             await engine.dispose()
@@ -92,11 +99,20 @@ def run_research_task(task: Task, run_id: int) -> dict[str, int | str]:
             retry = task.retry(exc=error, countdown=2**retries, throw=False)
             raise retry from None
         asyncio.run(persist_research_failure(run_id, error.code, error.message))
-    except (OperationalError, RedisError, AppError) as error:
+    except AppError as error:
         retries = int(task.request.retries)
-        if retries < MAX_RESEARCH_RETRIES and (
-            not isinstance(error, AppError) or error.status_code >= 500
-        ):
+        retryable = error.code in {
+            "RESEARCH_EMBEDDING_UNAVAILABLE",
+            "RESEARCH_SEARCH_UNAVAILABLE",
+        }
+        if retryable and retries < MAX_RESEARCH_RETRIES:
+            safe_error = RuntimeError(error.message)
+            retry = task.retry(exc=safe_error, countdown=2**retries, throw=False)
+            raise retry from None
+        asyncio.run(persist_research_failure(run_id, error.code, error.message))
+    except (OperationalError, RedisError):
+        retries = int(task.request.retries)
+        if retries < MAX_RESEARCH_RETRIES:
             safe_error = RuntimeError("研究基础设施暂时不可用")
             retry = task.retry(exc=safe_error, countdown=2**retries, throw=False)
             raise retry from None

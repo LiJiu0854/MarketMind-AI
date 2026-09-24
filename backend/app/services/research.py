@@ -1,5 +1,6 @@
 """研究记录的短事务与商品范围边界。"""
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -16,6 +17,7 @@ from app.services.semantic_reviews import build_product_snapshot
 
 PROMPT_VERSION = "research-v1"
 ACTIVE_STATUSES = (ResearchStatus.PENDING, ResearchStatus.RUNNING)
+MAX_RESEARCH_INPUT_CHARS = 20_000
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,20 @@ class ResearchUsage:
 
 def _add_usage(previous: int | None, current: int | None) -> int | None:
     return None if previous is None or current is None else previous + current
+
+
+def _accumulate_usage(run: ResearchRun, usage: ResearchUsage) -> None:
+    run.prompt_tokens = _add_usage(run.prompt_tokens, usage.prompt_tokens)
+    run.completion_tokens = _add_usage(run.completion_tokens, usage.completion_tokens)
+    run.embedding_tokens = _add_usage(run.embedding_tokens, usage.embedding_tokens)
+    if (
+        run.prompt_tokens is not None
+        and run.completion_tokens is not None
+        and run.embedding_tokens is not None
+    ):
+        run.total_tokens = run.prompt_tokens + run.completion_tokens + run.embedding_tokens
+    else:
+        run.total_tokens = None
 
 
 async def create_research_run(
@@ -84,12 +100,17 @@ async def create_research_run(
             )
             if ready_id is None:
                 raise AppError("RESEARCH_KNOWLEDGE_NOT_READY", "知识库没有已就绪文档", 409)
+        snapshot = build_product_snapshot(product).model_dump(mode="json")
+        if len(json.dumps(snapshot, ensure_ascii=False)) > MAX_RESEARCH_INPUT_CHARS:
+            raise AppError(
+                "RESEARCH_INPUT_TOO_LARGE", "商品内容过长，无法发起研究", 422
+            )
         run = ResearchRun(
             product_id=product_id,
             requested_by_id=actor_id,
             goal=payload.goal,
             knowledge_base_ids=list(payload.knowledge_base_ids),
-            product_snapshot=build_product_snapshot(product).model_dump(mode="json"),
+            product_snapshot=snapshot,
             status=ResearchStatus.PENDING,
             provider=settings.llm_provider,
             model=settings.llm_model,
@@ -150,10 +171,12 @@ async def list_research_runs(
 
 async def set_research_task_id(session: AsyncSession, run_id: int, task_id: str) -> ResearchRun:
     try:
-        run = await session.get(ResearchRun, run_id)
+        run = await session.scalar(
+            select(ResearchRun).where(ResearchRun.id == run_id).with_for_update()
+        )
         if run is None:
             raise AppError("RESEARCH_NOT_FOUND", "研究记录不存在", 404)
-        if run.status is ResearchStatus.PENDING:
+        if run.celery_task_id is None:
             run.celery_task_id = task_id
             await session.commit()
             await session.refresh(run)
@@ -219,17 +242,34 @@ async def append_research_step(
             return None
         run.steps = [*run.steps, step]
         run.evidence = [item.model_dump(mode="json") for item in evidence]
-        run.prompt_tokens = _add_usage(run.prompt_tokens, usage.prompt_tokens)
-        run.completion_tokens = _add_usage(run.completion_tokens, usage.completion_tokens)
-        run.embedding_tokens = _add_usage(run.embedding_tokens, usage.embedding_tokens)
-        if (
-            run.prompt_tokens is not None
-            and run.completion_tokens is not None
-            and run.embedding_tokens is not None
-        ):
-            run.total_tokens = run.prompt_tokens + run.completion_tokens + run.embedding_tokens
-        else:
-            run.total_tokens = None
+        _accumulate_usage(run, usage)
+        await session.commit()
+        await session.refresh(run)
+        return run
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def mark_research_success(
+    session: AsyncSession,
+    run_id: int,
+    report: dict[str, object],
+    usage: ResearchUsage,
+) -> ResearchRun | None:
+    """只从运行态保存程序核验的最终报告。"""
+    try:
+        run = await session.scalar(
+            select(ResearchRun).where(ResearchRun.id == run_id).with_for_update()
+        )
+        if run is None or run.status is not ResearchStatus.RUNNING:
+            return None
+        run.status = ResearchStatus.SUCCESS
+        run.report = report
+        _accumulate_usage(run, usage)
+        run.error_code = None
+        run.error_message = None
+        run.completed_at = datetime.now(UTC)
         await session.commit()
         await session.refresh(run)
         return run

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.models.research import ResearchStatus
 
 PositiveBaseID = Annotated[int, Field(gt=0, strict=True)]
+EvidenceGap = Annotated[str, Field(min_length=1, max_length=500)]
 
 
 class ResearchCreate(BaseModel):
@@ -161,4 +162,37 @@ class ResearchAction(BaseModel):
                 raise ValueError("知识库检索需要 ID 与查询词")
         elif self.knowledge_base_id is not None or self.query is not None:
             raise ValueError("此动作不能携带知识库参数")
+        return self
+
+
+class ResearchFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim: str = Field(min_length=1, max_length=500)
+    source_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+class ResearchRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(min_length=1, max_length=500)
+    reason: str = Field(min_length=1, max_length=500)
+    source_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+class ResearchReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["supported", "insufficient_evidence"]
+    summary: str = Field(min_length=1, max_length=2000)
+    findings: list[ResearchFinding] = Field(max_length=10)
+    recommendations: list[ResearchRecommendation] = Field(max_length=5)
+    evidence_gaps: list[EvidenceGap] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def verify_outcome(self) -> Self:
+        if self.outcome == "supported" and not self.findings:
+            raise ValueError("有证据报告至少需要一条发现")
+        if self.outcome == "insufficient_evidence" and (self.findings or self.recommendations):
+            raise ValueError("证据不足报告不能包含发现或建议")
         return self
