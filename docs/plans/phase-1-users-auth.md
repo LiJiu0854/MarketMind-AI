@@ -1,6 +1,6 @@
 # 阶段 1 用户、数据库与权限实施计划
 
-> **给 Agent 执行者：** 必须使用 `superpowers:executing-plans` 在当前会话逐 Task 执行。每一步使用复选框跟踪；每个功能严格遵循 RED → GREEN → REFACTOR。
+> **给 Agent 执行者：** 必须使用 `superpowers:executing-plans` 在当前会话逐任务 执行。每一步使用复选框跟踪；每个功能严格遵循 RED → GREEN → REFACTOR。
 
 **目标：** 使用真实 MySQL 构建可迁移、可测试的内部用户管理、JWT 认证和固定角色 RBAC。
 
@@ -14,16 +14,16 @@
 
 - 仓库根目录固定为 `C:\Users\17905\Desktop\MarketMind-AI`。
 - 只在 `phase/1-users-auth` 开发；本人验收前不得合并 `main` 或创建标签。
-- 阶段 1 固定为 4 个 Task，不增加第五个 Task。
+- 阶段 1 固定为 4 个任务，不增加第五个任务。
 - 开发库 `marketmind` 与测试库 `marketmind_test` 必须物理隔离。
 - 不使用 SQLite 替代 MySQL 集成测试。
 - 数据库密码、`DATABASE_URL`、`TEST_DATABASE_URL`、`JWT_SECRET` 不得进入代码、测试、日志或 Git。
 - 不提供公开注册；第一个 Admin 由交互式 CLI 创建。
 - 删除用户表示停用，不执行物理删除。
 - JWT 只实现 30 分钟 Access Token；不实现 Refresh Token。
-- 每个 Task 按“问题与数据流 → 必要语法 → RED 测试 → 学习者编写关键代码 → 逐段讲解 → GREEN → 迁移练习”推进；首次出现的核心代码必须从零解释，重复代码说明复用方法。
-- 每个 Task 必须同时通过“能看懂、会使用、能编写、会迁移”四层学习验收，不能只用口述概念题代替代码练习。
-- 每个 Task 结束前运行聚焦测试、完整 pytest、Ruff 和 mypy，并创建独立提交。
+- 每个任务 按“问题与数据流 → 必要语法 → RED 测试 → 学习者编写关键代码 → 逐段讲解 → GREEN → 迁移练习”推进；首次出现的核心代码必须从零解释，重复代码说明复用方法。
+- 每个任务 必须同时通过“能看懂、会使用、能编写、会迁移”四层学习验收，不能只用口述概念题代替代码练习。
+- 每个任务 结束前运行聚焦测试、完整 pytest、Ruff 和 mypy，并创建独立提交。
 
 ## 文件结构
 
@@ -64,7 +64,7 @@ tests/
 
 ---
 
-### Task 1：从 Python 对象到 MySQL 表
+### 任务 1：从 Python 对象到 MySQL 表
 
 #### 学习目标
 
@@ -104,7 +104,7 @@ tests/
 - `create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]`。
 - `database_url: SecretStr | None` 与 `test_database_url: SecretStr | None`。
 
-- [x] **步骤 1：声明并安装 Task 1 数据库依赖**
+- [x] **步骤 1：声明并安装任务 1 数据库依赖**
 
 在运行依赖中加入：
 
@@ -301,7 +301,7 @@ target_metadata = Base.metadata
 3. 为什么测试必须使用 `marketmind_test`；
 4. 外层事务回滚如何防止测试数据污染。
 
-- [x] **步骤 11：Task 1 完整验证并提交**
+- [x] **步骤 11：任务 1 完整验证并提交**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
@@ -318,14 +318,14 @@ feat: add MySQL persistence foundation
 
 ---
 
-### Task 2：从业务输入到数据库事务
+### 任务 2：从业务输入到数据库事务
 
 #### 学习目标
 
 - **掌握什么：** Schema/Model 分离、Service 规则、事务提交与回滚、分页、业务异常、CLI 复用。
 - **真实用途：** 让 API、脚本和以后 Celery 任务执行同一套用户规则。
 - **数据流：** `UserCreate → normalize_email → hash_password → AsyncSession → UserRead`。
-- **迁移场景：** 商品、报告、Agent Task 的 CRUD Service。
+- **迁移场景：** 商品、报告、Agent 任务 的 CRUD Service。
 - **完成标准：** 能独立写一个带唯一约束、分页和软删除语义的 Service。
 
 **文件：**
@@ -366,7 +366,7 @@ feat: add MySQL persistence foundation
 
 ---
 
-### Task 3：从密码凭证到当前用户
+### 任务 3：从密码凭证到当前用户
 
 #### 学习目标
 
@@ -409,7 +409,7 @@ feat: add MySQL persistence foundation
 
 ---
 
-### Task 4：从当前用户到受保护接口
+### 任务 4：从当前用户到受保护接口
 
 #### 学习目标
 
@@ -446,7 +446,7 @@ DELETE /api/v1/users/{user_id}
 
 - [x] 先写 RBAC RED：Admin 成功，Operator/Analyst 返回 403，无 Token 返回 401。
 - [x] 实现 `require_roles(Role.ADMIN)` 依赖并一次性保护整个 users router。
-- [x] 注册用户管理路由，连接 Task 2 的 Service；`DELETE` 只设置 `is_active=False`。
+- [x] 注册用户管理路由，连接任务 2 的 Service；`DELETE` 只设置 `is_active=False`。
 - [x] 先写统一错误 RED，精确断言 `code`、`message`、`request_id` 和 HTTP 状态。
 - [x] 注册 `AppError`、请求校验异常和数据库不可用异常处理器；不得返回 SQL 或连接串。
 - [x] API 测试覆盖创建、重复邮箱、列表分页、读取、更新、停用、重新启用、自停用拒绝和密码哈希不泄露。
@@ -459,4 +459,4 @@ DELETE /api/v1/users/{user_id}
 
 ## 阶段 1 完成门禁
 
-只有四个 Task 全部通过聚焦测试、真实 MySQL 集成测试、完整 pytest、Ruff、mypy、手工运行和本人学习验收，阶段分支已推送，并得到本人明确确认后，阶段 1 才算完成。
+只有四个任务 全部通过聚焦测试、真实 MySQL 集成测试、完整 pytest、Ruff、mypy、手工运行和本人学习验收，阶段分支已推送，并得到本人明确确认后，阶段 1 才算完成。

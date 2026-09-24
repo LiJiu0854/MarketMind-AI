@@ -4,7 +4,7 @@
 
 阶段 4 在阶段 3 的商品库和确定性 Listing 检查之上，增加可追溯的 LLM 语义审核。Admin、Operator 可以为商品发起异步审核，三种角色都可以查看审核历史和结果。审核记录保存到 MySQL，包含请求时商品快照、模型身份、提示词版本、评分、问题、改写建议、Token 用量和安全错误摘要。
 
-本阶段固定拆分为 4 个 Task，每个 Task 5 个学习单元。实现继续复用现有 FastAPI、Pydantic、SQLAlchemy、Alembic、MySQL、Redis、Celery、JWT、RBAC、统一异常和测试基础设施。
+本阶段固定拆分为 4 个任务，每个任务 5 个学习单元。实现继续复用现有 FastAPI、Pydantic、SQLAlchemy、Alembic、MySQL、Redis、Celery、JWT、RBAC、统一异常和测试基础设施。
 
 学习优先级是先理解一条完整的真实调用链，再增加必要的生产边界。代码只实现一个 OpenAI-compatible 调用路径，不为尚未出现的协议差异创建 Provider 接口、工厂或策略体系。
 
@@ -414,9 +414,9 @@ tests/conftest.py
 - 验证历史记录保留各自的 provider 和 model；
 - 全量 pytest、Ruff、mypy 和 `git diff --check` 通过。
 
-## 15. Task 与学习单元
+## 15. 任务 与学习单元
 
-### Task 1：审核领域模型与 MySQL 持久化（5 个单元）
+### 任务 1：审核领域模型与 MySQL 持久化（5 个单元）
 
 1. 审核状态 Enum、身份字段和外键；
 2. 快照、结果、Token、错误和时间字段；
@@ -424,7 +424,7 @@ tests/conftest.py
 4. 创建、读取、分页 Service；
 5. 活动审核并发约束和数据库集成验收。
 
-### Task 2：Prompt 与 OpenAI-compatible 调用（5 个单元）
+### 任务 2：Prompt 与 OpenAI-compatible 调用（5 个单元）
 
 1. 通用 LLM 配置、依赖和密钥保护；
 2. 商品快照、模型输出、详情和分页 Pydantic Schema；
@@ -432,7 +432,7 @@ tests/conftest.py
 4. Chat Completions、JSON 解析和 Pydantic 校验；
 5. 异常分类、Token 用量和 Mock 验收。
 
-### Task 3：Celery 语义审核任务（5 个单元）
+### 任务 3：Celery 语义审核任务（5 个单元）
 
 1. Celery 任务注册与同步入口；
 2. Worker 独立 MySQL Session 和审核状态迁移；
@@ -440,7 +440,7 @@ tests/conftest.py
 4. 临时错误重试与永久错误持久化；
 5. Worker 资源释放和故障验收。
 
-### Task 4：审核 API 与阶段验收（5 个单元）
+### 任务 4：审核 API 与阶段验收（5 个单元）
 
 1. 发起审核 API 与 202 响应；
 2. 历史分页和详情 API；
@@ -450,7 +450,7 @@ tests/conftest.py
 
 ## 16. 学习文档规则
 
-每个 Task 开始时生成一份本地中文教程，完成后在同一文件追加实际参考实现和排错记录：
+每个任务 开始时生成一份本地中文教程，完成后在同一文件追加实际参考实现和排错记录：
 
 ```text
 docs/learning/phase-4-task-1-semantic-review-model.md
@@ -461,7 +461,7 @@ docs/learning/phase-4-task-4-review-api-acceptance.md
 
 教程保持未跟踪，不进入 Git。每份教程必须包含：
 
-- 本 Task 的业务目标和学习目标；
+- 本任务 的业务目标和学习目标；
 - 新建、修改和复用文件的完整职责；
 - RED、GREEN、重构和验收的真实顺序；
 - 每个代码块的依赖来源：标准库、第三方包、已有项目代码或本阶段代码；
@@ -478,7 +478,7 @@ docs/learning/phase-4-task-4-review-api-acceptance.md
 ## 17. Git 与安全边界
 
 - 阶段分支为 `phase/4-llm-semantic-review`；
-- 每个 Task 独立通过测试后提交；
+- 每个任务 独立通过测试后提交；
 - 使用精确 `git add` 文件列表，禁止 `git add .` 和 `git add -A`；
 - 不修改、删除、还原、暂存或提交已有本地学习文件与 `tests/unit/models/test_product_practice.py`；
 - 不读取、输出或提交 `.env`；
@@ -488,7 +488,7 @@ docs/learning/phase-4-task-4-review-api-acceptance.md
 
 ## 18. 阶段完成条件
 
-- 4 个 Task、每个 Task 5 个单元全部完成；
+- 4 个任务、每个任务 5 个单元全部完成；
 - 异步审核、历史持久化、快照和状态迁移与本文一致；
 - 活动审核并发保护与 Worker 重投边界经过测试；
 - 外部模型输出经过 JSON 和 Pydantic 双重校验；

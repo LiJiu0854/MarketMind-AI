@@ -531,9 +531,9 @@ git diff --check
 一个无答案的问题，验证 MySQL 历史、引用、Token 用量以及模型配置切换。未执行付费验收不
 伪装成已经验证。
 
-## 17. Task 与学习单元
+## 17. 任务 与学习单元
 
-### Task 1：知识库、文档模型与上传（5 个单元）
+### 任务 1：知识库、文档模型与上传（5 个单元）
 
 1. 知识库、文档、问答 Enum 和 ORM Model；
 2. Alembic 三表迁移与测试数据库验收；
@@ -541,7 +541,7 @@ git diff --check
 4. 文件验证、原子存储、SHA-256 和失败补偿；
 5. 创建/列表/详情/上传 API、RBAC 和 202 投递。
 
-### Task 2：解析、分块、Embedding 与异步索引（5 个单元）
+### 任务 2：解析、分块、Embedding 与异步索引（5 个单元）
 
 1. PDF/Markdown/TXT 解析与安全失败；
 2. 确定性分块、来源位置、重叠和 Chunk 上限；
@@ -549,7 +549,7 @@ git diff --check
 4. Chroma Collection、upsert、清理和维度契约；
 5. Celery 状态机、Redis 锁、重试、幂等和资源释放。
 
-### Task 3：检索、回答、引用与历史（5 个单元）
+### 任务 3：检索、回答、引用与历史（5 个单元）
 
 1. 问题 Schema、Embedding 和指定 Collection 检索；
 2. distance 过滤、ready 文档验证和无证据拒答；
@@ -557,7 +557,7 @@ git diff --check
 4. 引用编号映射、虚假引用拒绝和 Token 汇总；
 5. 问答 API、历史分页、详情、RBAC 和故障持久化。
 
-### Task 4：评估、回归与阶段验收（5 个单元）
+### 任务 4：评估、回归与阶段验收（5 个单元）
 
 1. JSONL 评估数据校验；
 2. Hit@K、MRR、引用有效率和拒答正确率；
@@ -567,7 +567,7 @@ git diff --check
 
 ## 18. 学习文档规则
 
-每个 Task 生成一份本地中文教程并保持未跟踪：
+每个任务 生成一份本地中文教程并保持未跟踪：
 
 ```text
 docs/learning/phase-5-task-1-knowledge-upload.md
@@ -596,7 +596,7 @@ docs/learning/phase-5-task-4-evaluation-acceptance.md
 ## 19. Git 与安全边界
 
 - 阶段分支固定为 `phase/5-rag`；
-- 每个 Task 在聚焦测试、Ruff、mypy 和 `git diff --check` 通过后精确提交；
+- 每个任务 在聚焦测试、Ruff、mypy 和 `git diff --check` 通过后精确提交；
 - 不使用 `git add .` 或 `git add -A`；
 - `docs/learning/` 和用户练习文件保持本地未跟踪，不进入工程提交；
 - 不读取、输出、暂存或提交 `.env`；

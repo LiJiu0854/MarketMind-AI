@@ -4,7 +4,7 @@
 
 阶段 3 建立 MarketMind AI 的商品数据主链路：具有权限的用户可以维护共享商品库、上传 `.xlsx` 文件批量导入商品、获得逐行错误报告、执行可解释的 Listing 确定性检查，并把筛选后的商品重新导出为 `.xlsx`。
 
-本阶段固定拆分为 4 个 Task，每个 Task 5 个学习单元。所有功能继续使用既有 FastAPI、Pydantic、SQLAlchemy、Alembic、MySQL、JWT、RBAC、统一异常和测试基础设施。
+本阶段固定拆分为 4 个任务，每个任务 5 个学习单元。所有功能继续使用既有 FastAPI、Pydantic、SQLAlchemy、Alembic、MySQL、JWT、RBAC、统一异常和测试基础设施。
 
 ## 2. 范围边界
 
@@ -325,9 +325,9 @@ alembic/versions/0002_create_products_table.py
 - 验证 Analyst 不能写入；
 - 全量 pytest、Ruff、mypy 和 `git diff --check` 通过。
 
-## 15. Task 与学习单元
+## 15. 任务 与学习单元
 
-### Task 1：商品领域模型与 CRUD（5 个单元）
+### 任务 1：商品领域模型与 CRUD（5 个单元）
 
 1. Product Model 与创建人外键；
 2. Alembic 商品表迁移；
@@ -335,7 +335,7 @@ alembic/versions/0002_create_products_table.py
 4. 商品 CRUD、分页、筛选和软停用 Service；
 5. API、RBAC 和数据库集成验收。
 
-### Task 2：Excel 读取、清洗与校验（5 个单元）
+### 任务 2：Excel 读取、清洗与校验（5 个单元）
 
 1. 文件扩展名和 5 MB 上传边界；
 2. Pandas 读取、表头和 5000 行限制；
@@ -343,7 +343,7 @@ alembic/versions/0002_create_products_table.py
 4. 单行类型与业务字段校验；
 5. 纯内存 Excel 测试和错误定位验收。
 
-### Task 3：批量导入、去重与错误报告（5 个单元）
+### 任务 3：批量导入、去重与错误报告（5 个单元）
 
 1. 文件内重复 SKU 检测；
 2. 数据库已有 SKU 批量查询；
@@ -351,7 +351,7 @@ alembic/versions/0002_create_products_table.py
 4. 导入 API 和逐行 JSON 错误报告；
 5. 部分成功、并发冲突和数据库异常验收。
 
-### Task 4：Listing 规则、Excel 导出与阶段验收（5 个单元）
+### 任务 4：Listing 规则、Excel 导出与阶段验收（5 个单元）
 
 1. ListingIssue Schema 与纯规则函数；
 2. Listing 检查 API；
@@ -361,7 +361,7 @@ alembic/versions/0002_create_products_table.py
 
 ## 16. 阶段完成条件
 
-- 4 个 Task、每个 Task 5 个单元全部完成；
+- 4 个任务、每个任务 5 个单元全部完成；
 - Product 数据库约束、CRUD 和权限行为与本文一致；
 - `.xlsx` 文件边界、清洗、校验、去重和部分成功行为经过测试；
 - Listing 规则全部可解释且不调用 LLM；

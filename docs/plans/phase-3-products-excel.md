@@ -1,6 +1,6 @@
 # 阶段 3：商品数据与 Excel 实施计划
 
-> **给执行者：** 必须使用 `superpowers:executing-plans` 按 Task 执行。每个单元严格遵循 RED → GREEN → REFACTOR；学习者填写教程标出的核心逻辑，机械接线由 Agent 完成。
+> **给执行者：** 必须使用 `superpowers:executing-plans` 按任务 执行。每个单元严格遵循 RED → GREEN → REFACTOR；学习者填写教程标出的核心逻辑，机械接线由 Agent 完成。
 
 **目标：** 实现共享商品库、`.xlsx` 同步导入、逐行错误报告、确定性 Listing 检查和筛选导出。
 
@@ -12,7 +12,7 @@
 
 ## 全局约束
 
-- 固定 4 个 Task，每个 Task 5 个学习单元。
+- 固定 4 个任务，每个任务 5 个学习单元。
 - 只支持 `.xlsx`；最大 5 MB，最大 5000 个数据行。
 - 商品为团队共享资源，`created_by_id` 只用于审计。
 - Admin、Operator 可写；Analyst 只读、检查和导出。
@@ -21,7 +21,7 @@
 - 不实现异步 Excel 导入、文件存储、商品缓存、LLM、RAG、Agent、SSE、MCP、Playwright 或前端。
 - 教学文档保存到 `docs/learning/`，保持本地未跟踪，不纳入 Git。
 - 不修改或提交 `docs/learning/phase-0-baseline.md` 和 `tests/unit/models/test_product_practice.py`。
-- 每个 Task 通过 pytest、Ruff、mypy 和 `git diff --check` 后才能提交。
+- 每个任务 通过 pytest、Ruff、mypy 和 `git diff --check` 后才能提交。
 
 ## 文件结构与职责
 
@@ -56,7 +56,7 @@ tests/api/test_products.py
 
 ---
 
-# Task 1：商品领域模型与 CRUD
+# 任务 1：商品领域模型与 CRUD
 
 ## 学习目标
 
@@ -152,7 +152,7 @@ AppError(code="PRODUCT_SKU_CONFLICT", message="SKU 已存在", status_code=409)
 
 **RED：** Admin/Operator 写入成功、Analyst 写入 403、三种角色读取成功、未认证 401、分页筛选、更新和软停用。
 
-**GREEN：** Router 前缀为 `/products`，全局依赖 `get_current_user`；写接口额外注入 `require_roles(Role.ADMIN, Role.OPERATOR)`。创建接口把当前用户 ID 传给 Service，并在 `create_app()` 注册 Router。本 Task 不接入 Redis，也不要求幂等请求头。
+**GREEN：** Router 前缀为 `/products`，全局依赖 `get_current_user`；写接口额外注入 `require_roles(Role.ADMIN, Role.OPERATOR)`。创建接口把当前用户 ID 传给 Service，并在 `create_app()` 注册 Router。本任务 不接入 Redis，也不要求幂等请求头。
 
 ```python
 ProductManager = Annotated[
@@ -161,7 +161,7 @@ ProductManager = Annotated[
 ]
 ```
 
-**Task 1 验收：**
+**任务 1 验收：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\models\test_product.py tests\unit\schemas\test_product.py tests\integration\db\test_products.py tests\api\test_products.py -q
@@ -179,7 +179,7 @@ git commit -m "feat: add product catalog CRUD"
 
 ---
 
-# Task 2：Excel 读取、清洗与校验
+# 任务 2：Excel 读取、清洗与校验
 
 ## 学习目标
 
@@ -243,7 +243,7 @@ class ProductImportError(BaseModel):
 
 **GREEN：** `parse_product_workbook()` 维护 `seen_skus: set[str]`。第二个相同规范化 SKU 返回 `DUPLICATE_SKU_IN_FILE`，第一次合法行保留。一个错误行只产生一个汇总错误。
 
-**Task 2 验收：**
+**任务 2 验收：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\services\test_product_excel.py tests\unit\schemas\test_product.py -q
@@ -261,7 +261,7 @@ git commit -m "feat: add product Excel validation"
 
 ---
 
-# Task 3：批量导入、去重与错误报告
+# 任务 3：批量导入、去重与错误报告
 
 ## 学习目标
 
@@ -347,7 +347,7 @@ async def import_product_workbook(
 - 数据库错误响应不包含 SQL、连接串或密码；
 - 同一文件再次导入时不重复创建商品。
 
-**Task 3 验收：**
+**任务 3 验收：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\services\test_product_excel.py tests\integration\db\test_product_import.py tests\api\test_products.py -q
@@ -365,7 +365,7 @@ git commit -m "feat: add partial product import"
 
 ---
 
-# Task 4：Listing 规则、Excel 导出与阶段验收
+# 任务 4：Listing 规则、Excel 导出与阶段验收
 
 ## 学习目标
 
@@ -471,7 +471,7 @@ git diff --check
 9. 确认日志、响应和 Git 差异没有密码、JWT 或数据库 URL；
 10. 在本地教程追加阶段 3 的实际类与函数关系流程图。
 
-**Task 4 验收：**
+**任务 4 验收：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
@@ -490,9 +490,9 @@ git commit -m "feat: add listing checks and Excel export"
 
 ---
 
-# 每个 Task 的教学执行规则
+# 每个任务 的教学执行规则
 
-开始一个 Task 时，只创建当前 Task 的本地中文教程，必须包含：
+开始一个任务 时，只创建当前任务 的本地中文教程，必须包含：
 
 1. 业务效果和要掌握的能力；
 2. 🔴必须手写、🟡理解即可、🔵了解用途；
@@ -503,7 +503,7 @@ git commit -m "feat: add listing checks and Excel export"
 7. 机械接线和重复代码由 Agent 完成并解释；
 8. 单元验收命令和完成口令；
 9. 学习者完成后再追加参考实现、真实错误复盘和迁移练习；
-10. Task 4 结束时追加阶段 3 实际关系流程图。
+10. 任务 4 结束时追加阶段 3 实际关系流程图。
 
 对应本地教程：
 
@@ -514,7 +514,7 @@ docs/learning/phase-3-task-3-product-import.md
 docs/learning/phase-3-task-4-listing-export.md
 ```
 
-不得一次生成四份教程。等待学习者完成当前 Task 的单元后再继续。
+不得一次生成四份教程。等待学习者完成当前任务 的单元后再继续。
 
 # Git 边界
 

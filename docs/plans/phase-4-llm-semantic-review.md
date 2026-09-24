@@ -1,16 +1,16 @@
-# Phase 4 LLM Listing Semantic Review Implementation Plan
+# 阶段 4：LLM 商品语义审核实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **执行说明：** 按任务逐项实施时，使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 技能。步骤以复选框（`- [ ]`）跟踪。
 
-**Goal:** 为商品增加可追溯、可切换 OpenAI-compatible 模型、异步执行并持久化到 MySQL 的 LLM Listing 语义审核。
+**目标：** 为商品增加可追溯、可切换 OpenAI-compatible 模型、异步执行并持久化到 MySQL 的 LLM Listing 语义审核。
 
-**Architecture:** FastAPI 创建审核记录并向现有 Celery 投递 `review_id`；Worker 使用现有 Redis 锁防止重复执行，通过 OpenAI Python SDK 调用 Chat Completions，并把经过 JSON 与 Pydantic 校验的结果写回 MySQL。MySQL 是状态与历史的唯一事实来源，外部供应商只由 `LLM_*` 环境变量决定。
+**架构：** FastAPI 创建审核记录并向现有 Celery 投递 `review_id`；Worker 使用现有 Redis 锁防止重复执行，通过 OpenAI Python SDK 调用 Chat Completions，并把经过 JSON 与 Pydantic 校验的结果写回 MySQL。MySQL 是状态与历史的唯一事实来源，外部供应商只由 `LLM_*` 环境变量决定。
 
-**Tech Stack:** Python 3.12、FastAPI、Pydantic 2、SQLAlchemy 2 async、Alembic、MySQL 8、Redis、Celery 5.6、OpenAI Python SDK 2.x、pytest、Ruff、mypy。
+**技术栈：** Python 3.12、FastAPI、Pydantic 2、SQLAlchemy 2 async、Alembic、MySQL 8、Redis、Celery 5.6、OpenAI Python SDK 2.x、pytest、Ruff、mypy。
 
-**Spec:** `docs/plans/phase-4-llm-semantic-review-design.md`
+**设计文档：** `docs/plans/phase-4-llm-semantic-review-design.md`
 
-## Global Constraints
+## 全局约束
 
 - 阶段分支固定为 `phase/4-llm-semantic-review`。
 - 新依赖固定为 `openai>=2.0,<3.0`，不增加第二个模型 SDK。
@@ -24,37 +24,37 @@
 - 学习文档写入 `docs/learning/phase-4-task-*.md`，保持本地未跟踪，不暂存、不提交。
 - 不修改、删除、还原或提交已有 `docs/learning/` 文件和 `tests/unit/models/test_product_practice.py`。
 - Git 只使用精确文件列表，禁止 `git add .` 和 `git add -A`。
-- 每个 Task 必须按 RED → GREEN → Ruff → mypy → 回归测试 → 精确提交执行。
+- 每个任务 必须按 RED → GREEN → Ruff → mypy → 回归测试 → 精确提交执行。
 
-## Review Focus
+## 重点复核
 
-- 商品快照序列化后恰好越过 20000 字符时必须在投递前返回 422，且数据库零写入；Task 1 集成测试固定该边界。
-- 两个并发请求针对同一商品时只能创建一条活动审核，另一条必须得到 409；Task 1 使用两个独立 Session 的集成测试固定该行为。
-- 模型返回合法 JSON 但分数、枚举或长度不符合 Schema 时不得保存成功结果，也不得把原文暴露给用户；Task 2 单元测试固定该行为。
-- 连接、超时、限流和 5xx 最多重试 3 次，认证、4xx 参数错误和无效输出不重试；Task 3 Celery 测试固定分类和次数。
-- 终态审核被 Celery 重复投递时不得再次调用模型；Task 3 幂等测试固定该行为。
+- 商品快照序列化后恰好越过 20000 字符时必须在投递前返回 422，且数据库零写入；任务 1 集成测试固定该边界。
+- 两个并发请求针对同一商品时只能创建一条活动审核，另一条必须得到 409；任务 1 使用两个独立 Session 的集成测试固定该行为。
+- 模型返回合法 JSON 但分数、枚举或长度不符合 Schema 时不得保存成功结果，也不得把原文暴露给用户；任务 2 单元测试固定该行为。
+- 连接、超时、限流和 5xx 最多重试 3 次，认证、4xx 参数错误和无效输出不重试；任务 3 Celery 测试固定分类和次数。
+- 终态审核被 Celery 重复投递时不得再次调用模型；任务 3 幂等测试固定该行为。
 
 ---
 
-### Task 1: 审核领域模型与 MySQL 持久化
+### 任务 1：审核领域模型与 MySQL 持久化
 
-**Files:**
-- Create: `backend/app/models/semantic_review.py`
-- Create: `backend/app/schemas/semantic_review.py`
-- Create: `backend/app/services/semantic_reviews.py`
-- Create: `alembic/versions/0003_create_listing_semantic_reviews.py`
-- Create: `tests/unit/models/test_semantic_review.py`
-- Create: `tests/integration/db/test_semantic_reviews.py`
-- Modify: `backend/app/models/__init__.py`
-- Modify: `alembic/env.py`
-- Modify: `tests/conftest.py`
-- Local only: `docs/learning/phase-4-task-1-semantic-review-model.md`
+**涉及文件：**
+- 新建： `backend/app/models/semantic_review.py`
+- 新建： `backend/app/schemas/semantic_review.py`
+- 新建： `backend/app/services/semantic_reviews.py`
+- 新建： `alembic/versions/0003_create_listing_semantic_reviews.py`
+- 新建： `tests/unit/models/test_semantic_review.py`
+- 新建： `tests/integration/db/test_semantic_reviews.py`
+- 修改： `backend/app/models/__init__.py`
+- 修改： `alembic/env.py`
+- 修改： `tests/conftest.py`
+- 仅本地： `docs/learning/phase-4-task-1-semantic-review-model.md`
 
-**Interfaces:**
-- Consumes: `Product`, `User`, `Role`, `Base`, `AsyncSession`, `AppError`。
-- Produces: `SemanticReviewStatus`、`SemanticReview`、`ProductSnapshot`、`create_semantic_review()`、`get_semantic_review()`、`get_semantic_review_by_id()`、`list_semantic_reviews()`，供 Task 2～4 使用。
+**接口契约：**
+- 依赖： `Product`, `User`, `Role`, `Base`, `AsyncSession`, `AppError`。
+- 提供： `SemanticReviewStatus`、`SemanticReview`、`ProductSnapshot`、`create_semantic_review()`、`get_semantic_review()`、`get_semantic_review_by_id()`、`list_semantic_reviews()`，供任务 2～4 使用。
 
-- [ ] **Unit 1: 创建 Task 1 学习文档开篇与 Model RED 测试**
+- [ ] **单元 1：创建任务 1 学习文档开篇与 Model RED 测试**
 
 在本地教程中先记录业务目标、文件树、Model → Migration → Service 的依赖顺序，以及标准库 `StrEnum/datetime`、SQLAlchemy、项目 `Base/Product/User` 的来源。教程不暂存。
 
@@ -84,15 +84,15 @@ def test_semantic_review_model_contract() -> None:
     )
 ```
 
-Run:
+运行：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\models\test_semantic_review.py -q
 ```
 
-Expected: collection fails because `app.models.semantic_review` does not exist.
+预期：由于 `app.models.semantic_review` 尚不存在，测试收集失败。
 
-- [ ] **Unit 2: 实现状态 Enum 与完整 ORM Model**
+- [ ] **单元 2：实现状态 Enum 与完整 ORM Model**
 
 创建 `backend/app/models/semantic_review.py`。使用字符串 Enum 和非原生数据库约束，JSON 字段用普通 Python 容器类型，结果字段全部允许为空：
 
@@ -165,24 +165,24 @@ class SemanticReview(Base):
     )
 ```
 
-把 `SemanticReview` 加入 `backend/app/models/__init__.py` 和 `alembic/env.py` 的 metadata import。运行 Unit 1 测试，Expected: PASS。
+把 `SemanticReview` 加入 `backend/app/models/__init__.py`，并在 `alembic/env.py` 中导入元数据。运行单元 1 测试，预期通过。
 
-- [ ] **Unit 3: 写迁移并验证 upgrade/downgrade 结构**
+- [ ] **单元 3：写迁移并验证 upgrade/downgrade 结构**
 
 创建 revision `0003`、`down_revision="0002"`。迁移必须逐一建立设计表中的列、两个外键、状态约束、分数约束、`celery_task_id` 唯一索引，以及 product/requested_by/status 索引。`downgrade()` 只需 `op.drop_table("listing_semantic_reviews")`，MySQL 会随表删除索引和约束。
 
-Run:
+运行：
 
 ```powershell
 .venv\Scripts\alembic.exe -x database=test upgrade head
 .venv\Scripts\alembic.exe -x database=test current
 ```
 
-Expected: current revision is `0003 (head)`。不得对开发库执行 downgrade。
+预期：当前版本为 `0003 (head)`。不得对开发库执行降级。
 
-- [ ] **Unit 4: 写快照与数据库 Service RED 测试**
+- [ ] **单元 4：写快照与数据库 Service RED 测试**
 
-先在 `backend/app/schemas/semantic_review.py` 定义 Task 1 所需最小快照：
+先在 `backend/app/schemas/semantic_review.py` 定义任务 1 所需最小快照：
 
 ```python
 from decimal import Decimal
@@ -222,9 +222,9 @@ assert total == 1
 assert items == [review]
 ```
 
-Run and observe import failures for missing Service functions.
+运行测试，确认由于缺少 Service 函数而出现导入失败。
 
-- [ ] **Unit 5: 实现 Service、并发边界、夹具清理与 Task 1 验收**
+- [ ] **单元 5：实现 Service、并发边界、夹具清理与任务 1 验收**
 
 在 `backend/app/services/semantic_reviews.py` 定义：
 
@@ -367,7 +367,7 @@ async def list_semantic_reviews(
 
 修改 `tests/conftest.py`：导入 `SemanticReview`，每例按 `SemanticReview → Product → User` 删除，避免外键阻止清理。增加两个独立 Session 的并发测试，证明同一 Product 行锁只允许一个活动记录；增加 20001 字符快照测试，证明 422 且表中零记录。
 
-Run:
+运行：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\models\test_semantic_review.py tests\integration\db\test_semantic_reviews.py -q
@@ -376,7 +376,7 @@ Run:
 git diff --check
 ```
 
-在 Task 1 教程追加实际代码逐行解释、迁移原理、行锁/事务流、真实 RED/GREEN 输出和排错记录。只暂存工程文件：
+在任务 1 教程追加实际代码逐行解释、迁移原理、行锁/事务流、真实 RED/GREEN 输出和排错记录。只暂存工程文件：
 
 ```powershell
 git add -- alembic/env.py alembic/versions/0003_create_listing_semantic_reviews.py backend/app/models/__init__.py backend/app/models/semantic_review.py backend/app/schemas/semantic_review.py backend/app/services/semantic_reviews.py tests/conftest.py tests/unit/models/test_semantic_review.py tests/integration/db/test_semantic_reviews.py
@@ -385,24 +385,24 @@ git commit -m "feat: add semantic review persistence"
 
 ---
 
-### Task 2: Prompt 与 OpenAI-compatible 调用
+### 任务 2：Prompt 与 OpenAI-compatible 调用
 
-**Files:**
-- Modify: `pyproject.toml`
-- Modify: `.env.example`
-- Modify: `backend/app/core/config.py`
-- Modify: `backend/app/schemas/semantic_review.py`
-- Modify: `backend/app/services/semantic_reviews.py`
-- Modify: `tests/unit/core/test_config.py`
-- Create: `tests/unit/schemas/test_semantic_review.py`
-- Create: `tests/unit/services/test_semantic_reviews.py`
-- Local only: `docs/learning/phase-4-task-2-llm-client-prompt.md`
+**涉及文件：**
+- 修改： `pyproject.toml`
+- 修改： `.env.example`
+- 修改： `backend/app/core/config.py`
+- 修改： `backend/app/schemas/semantic_review.py`
+- 修改： `backend/app/services/semantic_reviews.py`
+- 修改： `tests/unit/core/test_config.py`
+- 新建： `tests/unit/schemas/test_semantic_review.py`
+- 新建： `tests/unit/services/test_semantic_reviews.py`
+- 仅本地： `docs/learning/phase-4-task-2-llm-client-prompt.md`
 
-**Interfaces:**
-- Consumes: Task 1 `ProductSnapshot`、`PROMPT_VERSION`、`SemanticReview`。
-- Produces: `LLMReviewResult`、`ReviewCompletion`、`SemanticReviewCallError`、`build_review_messages()`、`request_semantic_review()`，供 Task 3 Worker 使用。
+**接口契约：**
+- 依赖：任务 1 `ProductSnapshot`、`PROMPT_VERSION`、`SemanticReview`。
+- 提供： `LLMReviewResult`、`ReviewCompletion`、`SemanticReviewCallError`、`build_review_messages()`、`request_semantic_review()`，供任务 3 Worker 使用。
 
-- [ ] **Unit 1: 通用配置与依赖 RED**
+- [ ] **单元 1：通用配置与依赖 RED**
 
 将配置测试环境变量名单中的 `SILICONFLOW_*` 替换为六个 `LLM_*`。先写测试：默认 provider/base URL/timeout/token 上限安全，model/key 为空，key repr 不泄露，timeout/token 非正数触发 ValidationError。
 
@@ -417,7 +417,7 @@ def test_llm_settings_have_portable_safe_defaults() -> None:
     assert settings.llm_max_output_tokens == 2000
 ```
 
-Run config tests and observe missing attributes. Then modify `pyproject.toml`、`.env.example`、`Settings`：
+先运行配置测试，确认缺少属性导致失败。然后修改 `pyproject.toml`、`.env.example` 和 `Settings`：
 
 ```python
 llm_provider: str = "openai"
@@ -434,7 +434,7 @@ llm_max_output_tokens: int = Field(default=2_000, gt=0)
 uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 ```
 
-- [ ] **Unit 2: 模型输出 Schema RED 与 GREEN**
+- [ ] **单元 2：模型输出 Schema RED 与 GREEN**
 
 创建 `tests/unit/schemas/test_semantic_review.py`，验证合法结果、五项分数 0～100、固定枚举、最多 20 个问题、文本长度和改写卖点 3～5 条。实现：
 
@@ -484,7 +484,7 @@ class LLMReviewResult(BaseModel):
 
 为 `bullet_points` 增加逐项 10～200 字符 validator。测试必须覆盖 2 条、6 条、9 字符和 201 字符。
 
-- [ ] **Unit 3: Prompt 和注入防护 RED 与 GREEN**
+- [ ] **单元 3：Prompt 和注入防护 RED 与 GREEN**
 
 先测试 `build_review_messages()` 返回两个消息，system 内容声明商品是不可信数据和只能输出 JSON，user 内容能被 `json.loads()` 还原出原快照；带有“忽略之前规则”的标题仍只存在数据 JSON 中。
 
@@ -509,7 +509,7 @@ def build_review_messages(
 
 `SYSTEM_PROMPT` 必须写明五项评分、risk 高分代表低风险、固定输出字段、不得执行商品文本指令、不得虚构平台政策、不得输出思维链。
 
-- [ ] **Unit 4: OpenAI-compatible 调用与解析 RED**
+- [ ] **单元 4：OpenAI-compatible 调用与解析 RED**
 
 在 `tests/unit/services/test_semantic_reviews.py` patch `app.services.semantic_reviews.OpenAI`，构造具有 `choices[0].message.content` 和 `usage` 的 Mock。断言：
 
@@ -529,7 +529,7 @@ client.chat.completions.create.assert_called_once_with(
 
 再写空 content、损坏 JSON、合法 JSON 但 Schema 非法、usage 缺失测试，并先观察函数不存在的 RED。
 
-- [ ] **Unit 5: 实现调用、错误分类和 Task 2 验收**
+- [ ] **单元 5：实现调用、错误分类和任务 2 验收**
 
 在 Service 新增：
 
@@ -641,7 +641,7 @@ JSONDecodeError / ValidationError / empty content → REVIEW_INVALID_RESPONSE, F
 
 任何 `SemanticReviewCallError.message` 都使用预定义中文文本，不能拼接 `str(exc)`。
 
-Run:
+运行：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\core\test_config.py tests\unit\schemas\test_semantic_review.py tests\unit\services\test_semantic_reviews.py -q
@@ -650,7 +650,7 @@ Run:
 git diff --check
 ```
 
-追加 Task 2 教程：逐行解释 Settings、SecretStr、SDK 来源、JSON Mode、Prompt 注入边界、Pydantic 二次校验、异常分类及真实测试输出。精确提交：
+追加任务 2 教程：逐行解释 Settings、SecretStr、SDK 来源、JSON Mode、Prompt 注入边界、Pydantic 二次校验、异常分类及真实测试输出。精确提交：
 
 ```powershell
 git add -- pyproject.toml .env.example backend/app/core/config.py backend/app/schemas/semantic_review.py backend/app/services/semantic_reviews.py tests/unit/core/test_config.py tests/unit/schemas/test_semantic_review.py tests/unit/services/test_semantic_reviews.py
@@ -659,20 +659,20 @@ git commit -m "feat: add compatible LLM review client"
 
 ---
 
-### Task 3: Celery 语义审核任务
+### 任务 3：Celery 语义审核任务
 
-**Files:**
-- Create: `backend/app/tasks/semantic_review.py`
-- Create: `tests/unit/tasks/test_semantic_review.py`
-- Modify: `backend/app/services/semantic_reviews.py`
-- Modify: `backend/app/celery_app.py`
-- Local only: `docs/learning/phase-4-task-3-celery-review-task.md`
+**涉及文件：**
+- 新建： `backend/app/tasks/semantic_review.py`
+- 新建： `tests/unit/tasks/test_semantic_review.py`
+- 修改： `backend/app/services/semantic_reviews.py`
+- 修改： `backend/app/celery_app.py`
+- 仅本地： `docs/learning/phase-4-task-3-celery-review-task.md`
 
-**Interfaces:**
-- Consumes: Task 1 `SemanticReview` 查询，Task 2 `ProductSnapshot`、`ReviewCompletion`、`request_semantic_review()`、`SemanticReviewCallError`，现有 `redis_lock()` 和数据库工厂。
-- Produces: `generate_semantic_review` Celery Task、状态更新函数，供 Task 4 API 投递。
+**接口契约：**
+- 依赖：任务 1 `SemanticReview` 查询，任务 2 `ProductSnapshot`、`ReviewCompletion`、`request_semantic_review()`、`SemanticReviewCallError`，现有 `redis_lock()` 和数据库工厂。
+- 提供： `generate_semantic_review` Celery 任务、状态更新函数，供任务 4 API 投递。
 
-- [ ] **Unit 1: 状态更新 Service RED 与 GREEN**
+- [ ] **单元 1：状态更新 Service RED 与 GREEN**
 
 为 Service 写测试并实现精确签名：
 
@@ -752,7 +752,7 @@ async def set_review_task_id(
 
 实现时不得保留省略号。`mark_review_running` 对终态返回 None；否则设置 RUNNING、首次 started_at 和 attempt_count + 1。成功函数保存 `model_dump(mode="json")` 后的分数、问题和改写，清空错误并写 completed_at。失败函数只保存传入的稳定 code/message，清空未完成结果并写 completed_at。每个函数单次 commit，异常时 rollback。
 
-- [ ] **Unit 2: Celery 任务入口和独立资源 RED**
+- [ ] **单元 2：Celery 任务入口和独立资源 RED**
 
 创建 `tests/unit/tasks/test_semantic_review.py`。Mock `create_engine/create_session_factory/create_redis_client/close_redis_client`，证明 Worker 不依赖 FastAPI request Session，所有 finally 路径释放 Engine 和 Redis。
 
@@ -810,7 +810,7 @@ def generate_semantic_review(self: Task, review_id: int) -> dict[str, int | str]
 
 `run_review_task()` 是便于单测同步 Celery retry 行为的普通函数；异步资源协调由 `asyncio.run(run_semantic_review_attempt(review_id))` 执行。`persist_review_failure()` 使用新的短 Session 保存安全错误，若数据库持续不可用则抛出不含连接串的 `RuntimeError("无法保存审核失败状态")`，不得把原始数据库异常交给 Celery Result Backend。
 
-- [ ] **Unit 3: Redis 锁与终态幂等 RED/GREEN**
+- [ ] **单元 3：Redis 锁与终态幂等 RED/GREEN**
 
 测试未获得锁返回 `{"review_id": id, "status": "already_running"}`，且 `request_semantic_review` 未调用。测试 SUCCESS/FAILURE 重复投递返回终态且不调用模型。
 
@@ -872,7 +872,7 @@ async def persist_review_failure(
         await engine.dispose()
 ```
 
-- [ ] **Unit 4: 临时错误重试和永久失败 RED/GREEN**
+- [ ] **单元 4：临时错误重试和永久失败 RED/GREEN**
 
 Mock `request_semantic_review` 抛出 `SemanticReviewCallError`：
 
@@ -893,11 +893,11 @@ permanent = SemanticReviewCallError(
 
 数据库 `OperationalError` 作为临时错误走相同有限重试；若数据库持续不可用，任务可以失败，但不得伪造已持久化状态。
 
-- [ ] **Unit 5: 注册任务、完整 Task 3 验收与教程追加**
+- [ ] **单元 5：注册任务、完整任务 3 验收与教程追加**
 
 把 `"app.tasks.semantic_review"` 加入 `create_celery_app()` 的 include，不改变现有用户统计任务名。测试 `create_celery_app(settings).conf.include` 同时包含两个任务模块。
 
-Run:
+运行：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\tasks\test_semantic_review.py tests\unit\tasks\test_user_stats.py -q
@@ -906,7 +906,7 @@ Run:
 git diff --check
 ```
 
-Task 3 教程追加 Celery 同步入口、`asyncio.run`、Worker Session、Redis 所有者锁、至少一次投递、指数退避、状态机和资源释放的逐行解释与真实排错。精确提交：
+任务 3 教程追加 Celery 同步入口、`asyncio.run`、Worker Session、Redis 所有者锁、至少一次投递、指数退避、状态机和资源释放的逐行解释与真实排错。精确提交：
 
 ```powershell
 git add -- backend/app/tasks/semantic_review.py backend/app/services/semantic_reviews.py backend/app/celery_app.py tests/unit/tasks/test_semantic_review.py
@@ -915,22 +915,22 @@ git commit -m "feat: add semantic review Celery task"
 
 ---
 
-### Task 4: 审核 API、模型切换与阶段验收
+### 任务 4：审核 API、模型切换与阶段验收
 
-**Files:**
-- Create: `backend/app/api/v1/semantic_reviews.py`
-- Create: `tests/api/test_semantic_reviews.py`
-- Modify: `backend/app/schemas/semantic_review.py`
-- Modify: `backend/app/services/semantic_reviews.py`
-- Modify: `backend/app/main.py`
-- Modify: `README.md`
-- Local only: `docs/learning/phase-4-task-4-review-api-acceptance.md`
+**涉及文件：**
+- 新建： `backend/app/api/v1/semantic_reviews.py`
+- 新建： `tests/api/test_semantic_reviews.py`
+- 修改： `backend/app/schemas/semantic_review.py`
+- 修改： `backend/app/services/semantic_reviews.py`
+- 修改： `backend/app/main.py`
+- 修改： `README.md`
+- 仅本地： `docs/learning/phase-4-task-4-review-api-acceptance.md`
 
-**Interfaces:**
-- Consumes: Task 1 数据库 Service、Task 2 Schema/配置、Task 3 `generate_semantic_review.delay()` 与状态更新函数。
-- Produces: 三个 `/api/v1/products/{product_id}/semantic-reviews` HTTP 接口和阶段 4 完整验收结果。
+**接口契约：**
+- 依赖：任务 1 数据库 Service、任务 2 Schema/配置、任务 3 `generate_semantic_review.delay()` 与状态更新函数。
+- 提供： 三个 `/api/v1/products/{product_id}/semantic-reviews` HTTP 接口和阶段 4 完整验收结果。
 
-- [ ] **Unit 1: API 响应 Schema 与发起审核 RED**
+- [ ] **单元 1：API 响应 Schema 与发起审核 RED**
 
 在 Schema 文件添加：
 
@@ -981,7 +981,7 @@ class SemanticReviewPage(BaseModel):
 
 API RED 覆盖 Admin/Operator 202、Analyst 403、未登录 401、配置缺失 503、商品不存在 404。Mock `.delay()` 返回固定 `task-123`。
 
-- [ ] **Unit 2: 实现 POST、Broker 故障与失败记录**
+- [ ] **单元 2：实现 POST、Broker 故障与失败记录**
 
 创建 router：
 
@@ -1050,7 +1050,7 @@ async def create_product_semantic_review(
     )
 ```
 
-- [ ] **Unit 3: 历史与详情 API RED/GREEN**
+- [ ] **单元 3：历史与详情 API RED/GREEN**
 
 测试三种角色都能查看，历史按 ID 降序分页，错误 product_id 下的 review 返回 404，查询路径没有调用 `.delay()`。
 
@@ -1089,11 +1089,11 @@ async def read_semantic_review(
 
 实现时不得保留省略号。列表把 Service 返回的 tuple 转为 Page；详情直接返回 ORM，由 response model 转换。
 
-- [ ] **Unit 4: Router 注册、跨供应商配置文档和回归测试**
+- [ ] **单元 4：Router 注册、跨供应商配置文档和回归测试**
 
 在 `backend/app/main.py` 注册新 router。README 增加三条 API、Celery Worker 启动方式、MySQL/Redis 依赖、状态查询说明，以及 OpenAI/SiliconFlow/Qwen 的 `LLM_*` 配置示例；示例只用空密钥和公开 Base URL，不含真实凭据。
 
-Run:
+运行：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\api\test_semantic_reviews.py tests\integration\db\test_semantic_reviews.py tests\unit\services\test_semantic_reviews.py tests\unit\tasks\test_semantic_review.py -q
@@ -1102,7 +1102,7 @@ Run:
 git diff --check
 ```
 
-- [ ] **Unit 5: 全阶段自动化、受控人工验收、总教程与提交**
+- [ ] **单元 5：全阶段自动化、受控人工验收、总教程与提交**
 
 先完成自动化：
 
@@ -1117,7 +1117,7 @@ git diff --check
 
 人工真实调用只在用户已经于 `.env` 提供有效 `LLM_API_KEY`、`LLM_MODEL` 并明确同意产生一次费用后执行。启动 Redis、Celery Worker 和 API，创建一个测试商品，发起一次审核，轮询 MySQL-backed GET，检查 SUCCESS、五项分数、问题、改写和 Token 用量。随后只改 `LLM_PROVIDER/LLM_BASE_URL/LLM_MODEL/LLM_API_KEY` 并重启 Worker，即可验证第二家兼容服务；没有第二个密钥时只验证配置装配，不虚构真实调用成功。
 
-Task 4 教程追加 API 逐行解释、完整 Phase 4 类/函数关系图、供应商切换说明、成本控制、真实错误与面试口述。更新前三份教程的最终测试数字和提交 ID。教程保持本地未跟踪。
+任务 4 教程追加 API 逐行解释、完整 阶段 4 类/函数关系图、供应商切换说明、成本控制、真实错误与面试口述。更新前三份教程的最终测试数字和提交 ID。教程保持本地未跟踪。
 
 精确提交：
 

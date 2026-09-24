@@ -1,59 +1,59 @@
-# Phase 5 RAG Knowledge Base Implementation Plan
+# 阶段 5：RAG 知识库实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **执行说明：** 按任务逐项实施时，使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 技能。步骤以复选框（`- [ ]`）跟踪。
 
-**Goal:** Build a production-shaped knowledge-base RAG flow that asynchronously indexes PDF, Markdown, and TXT files, answers only from retrieved evidence with verified citations, and persists operational history in MySQL.
+**目标：** 建立具备实际项目形态的知识库 RAG 流程：异步索引 PDF、Markdown 和 TXT 文件；只依据检索证据回答并提供经验证的引用；将运行历史持久化到 MySQL。
 
-**Architecture:** MySQL owns knowledge-base, document, and query state; files live under a controlled local root; Celery parses and embeds documents; a server-backed Chroma collection per knowledge base owns the derived vector index. FastAPI performs authenticated management and synchronous cited question answering through OpenAI-compatible Embedding and Chat endpoints.
+**架构：** MySQL 保存知识库、文档和问答状态；文件存放在受控的本地根目录；Celery 负责解析文档和生成向量；每个知识库对应一个服务端 Chroma 集合，保存可重建的向量索引。FastAPI 提供经过身份认证的管理接口，并通过兼容 OpenAI 的 Embedding 和 Chat 接口同步完成带引用的问答。
 
-**Tech Stack:** Python 3.12, FastAPI, Pydantic 2, SQLAlchemy asyncio, Alembic, MySQL 8, Redis, Celery 5.6, OpenAI Python SDK 2.x, Chroma thin HTTP client 1.5.x, pypdf 6.x, pytest, Ruff, mypy.
+**技术栈：** Python 3.12、FastAPI、Pydantic 2、SQLAlchemy asyncio、Alembic、MySQL 8、Redis、Celery 5.6、OpenAI Python SDK 2.x、Chroma 轻量 HTTP 客户端 1.5.x、pypdf 6.x、pytest、Ruff、mypy。
 
-**Spec:** `docs/plans/phase-5-rag-design.md`
+**设计文档：** `docs/plans/phase-5-rag-design.md`
 
-## Global Constraints
+## 全局约束
 
-- Work only on branch `phase/5-rag`; do not merge, push, or delete the branch before user acceptance.
-- Add only `chromadb-client>=1.5,<2.0` and `pypdf>=6.17,<7.0`; do not add LangChain, LlamaIndex, a second model SDK, or OCR.
-- Use one cosine-distance Chroma collection named `marketmind_kb_{knowledge_base_id}` per knowledge base.
-- Store business state, audit history, verified citations, and Token usage in MySQL; Chroma is a rebuildable derived index.
-- Accept only `.pdf`, `.md`, and `.txt`; maximum upload size is 10 MiB; text must be UTF-8; PDF bytes must start with `%PDF-`.
-- Defaults: 1000-character chunks, 150-character overlap, top K 5, maximum cosine distance 0.35, maximum 2000 chunks per document, Embedding batch size 64.
-- Snapshot `embedding_provider`, `embedding_base_url`, and `embedding_model` per knowledge base; reject later configuration drift.
-- Keep API keys in `SecretStr`; never put secrets in MySQL, logs, responses, tests, examples, or Git.
-- Automated tests use mocks/fakes and never access real model endpoints or an external Chroma service.
-- Real paid model acceptance requires a separate explicit user approval.
-- Preserve every existing modified/untracked learning or practice file; never stage it.
-- Create four local Chinese learning documents under `docs/learning/` and keep them untracked.
-- Use exact `git add -- <files>` commands; never use `git add .` or `git add -A`.
-- Every unit follows RED → GREEN → focused Ruff/mypy; every Task ends with focused regression and `git diff --check`.
+- 只在 `phase/5-rag` 分支工作；用户验收前不得合并、推送或删除该分支。
+- 仅新增 `chromadb-client>=1.5,<2.0` 和 `pypdf>=6.17,<7.0`；不引入 LangChain、LlamaIndex、第二套模型 SDK 或 OCR。
+- 每个知识库使用一个余弦距离 Chroma 集合，名称为 `marketmind_kb_{knowledge_base_id}`。
+- 业务状态、审计历史、经验证的引用和 Token 用量存储于 MySQL；Chroma 只保存可重建的派生索引。
+- 仅接受 `.pdf`、`.md` 和 `.txt`；上传文件最大 10 MiB；文本必须为 UTF-8；PDF 字节必须以 `%PDF-` 开头。
+- 默认值：每块 1000 字符、重叠 150 字符、top K 为 5、最大余弦距离 0.35、每份文档最多 2000 块、Embedding 批量大小 64。
+- 为每个知识库固化 `embedding_provider`、`embedding_base_url` 和 `embedding_model` 快照；后续配置漂移必须拒绝。
+- API 密钥使用 `SecretStr`；不得写入 MySQL、日志、响应、测试、示例或 Git。
+- 自动化测试使用模拟对象，不访问真实模型接口或外部 Chroma 服务。
+- 真实付费模型验收必须另行获得用户明确批准。
+- 保留所有现有已修改或未跟踪的学习、练习文件，不得暂存。
+- 在 `docs/learning/` 下创建四份本地中文学习文档，并保持未跟踪。
+- 只使用精确指定文件的 `git add -- <files>` 命令；不得使用 `git add .` 或 `git add -A`。
+- 每个单元遵循 RED → GREEN → 定向 Ruff/mypy；每个任务结束时运行定向回归测试和 `git diff --check`。
 
-## Review Focus
+## 重点复核
 
-1. A traversal filename such as `../../secret.pdf` must not influence the stored path; Task 1 pins generated paths.
-2. Concurrent identical uploads to one knowledge base must produce one row plus stable 409 behavior, not an uncaught integrity error; Task 1 pins the database constraint and error mapping.
-3. A Chroma write followed by a failed MySQL ready commit must converge on retry without duplicate chunks; Task 2 pins deterministic IDs and delete/upsert.
-4. Provider vectors with mixed dimensions or non-finite values must be rejected before Chroma; Task 2 pins both cases.
-5. Chroma hits for missing or non-ready MySQL documents must not reach the prompt or citations; Task 3 pins readiness post-filtering.
+1. `../../secret.pdf` 等路径穿越文件名不得影响实际存储路径；任务 1 要验证生成路径。
+2. 同一知识库中并发上传相同文件时，只能生成一条记录，并稳定返回 409；不得泄漏未捕获的完整性错误。任务 1 要验证数据库约束与错误映射。
+3. Chroma 写入成功但 MySQL 的就绪状态提交失败后，重试必须收敛且不能生成重复块；任务 2 要验证确定性 ID 与删除/更新写入。
+4. 供应商返回维度混杂或非有限数值的向量时，必须在写入 Chroma 前拒绝；任务 2 要覆盖这两种情况。
+5. Chroma 命中但 MySQL 中不存在或尚未就绪的文档，不得进入提示词或引用；任务 3 要验证就绪状态的后置过滤。
 
 ---
 
-## File Map
+## 文件清单
 
-### New production files
+### 新增生产代码文件
 
-- `backend/app/models/knowledge.py` — ORM models and document/query status enums.
-- `backend/app/schemas/knowledge.py` — requests, responses, pages, chunks, citations, and provider output.
-- `backend/app/db/chroma.py` — async Chroma client and collection naming.
-- `backend/app/services/knowledge.py` — MySQL CRUD, file staging, pagination, status, and compensation.
-- `backend/app/services/document_ingestion.py` — parsing, chunking, Embedding, validation, and Chroma indexing.
-- `backend/app/services/rag.py` — retrieval, refusal, Prompt, Chat validation, citations, and query history.
-- `backend/app/services/rag_evaluation.py` — JSONL validation and RAG metrics.
-- `backend/app/tasks/knowledge.py` — Celery indexing lifecycle, lock, retry, and resource cleanup.
-- `backend/app/api/v1/knowledge_bases.py` — management, document, upload, question, and history API.
-- `alembic/versions/0004_create_rag_tables.py` — three RAG tables and constraints.
-- `scripts/evaluate_rag.py` — guarded evaluation CLI.
+- `backend/app/models/knowledge.py` — ORM 模型与文档、问答状态枚举。
+- `backend/app/schemas/knowledge.py` — 请求、响应、分页、文档块、引用及供应商输出的 Schema。
+- `backend/app/db/chroma.py` — 异步 Chroma 客户端和集合命名。
+- `backend/app/services/knowledge.py` — MySQL 增删改查、文件暂存、分页、状态更新和补偿处理。
+- `backend/app/services/document_ingestion.py` — 解析、分块、Embedding、校验及 Chroma 索引。
+- `backend/app/services/rag.py` — 检索、拒答、提示词、Chat 结果校验、引用及问答历史。
+- `backend/app/services/rag_evaluation.py` — JSONL 校验和 RAG 指标。
+- `backend/app/tasks/knowledge.py` — Celery 索引生命周期、锁、重试及资源清理。
+- `backend/app/api/v1/knowledge_bases.py` — 管理、文档、上传、问答及历史接口。
+- `alembic/versions/0004_create_rag_tables.py` — 三张 RAG 数据表及约束。
+- `scripts/evaluate_rag.py` — 带安全开关的评估命令行程序。
 
-### New tests
+### 新增测试
 
 - `tests/unit/models/test_knowledge.py`
 - `tests/unit/schemas/test_knowledge.py`
@@ -66,7 +66,7 @@
 - `tests/integration/db/test_knowledge.py`
 - `tests/api/test_knowledge_bases.py`
 
-### Modified files
+### 修改的文件
 
 - `pyproject.toml`, `.env.example`, `.gitignore`, `README.md`
 - `backend/app/core/config.py`, `backend/app/models/__init__.py`
@@ -75,32 +75,32 @@
 
 ---
 
-### Task 1: Knowledge-base persistence, safe file staging, and management API
+### 任务 1：知识库持久化、安全文件暂存和管理接口
 
-**Deliverable:** Admin can create/list/read knowledge bases; the service safely stages a validated file and creates a pending document; MySQL owns all three Phase 5 tables and enforces duplicate protection.
+**交付内容：** 管理员可以创建、列出和读取知识库；服务安全暂存通过校验的文件，并创建待处理文档；MySQL 保存阶段 5 的三张表，并强制执行去重约束。
 
-**Files:**
-- Create: `backend/app/models/knowledge.py`
-- Create: `backend/app/schemas/knowledge.py`
-- Create: `backend/app/services/knowledge.py`
-- Create: `backend/app/api/v1/knowledge_bases.py`
-- Create: `alembic/versions/0004_create_rag_tables.py`
-- Create: `tests/unit/models/test_knowledge.py`
-- Create: `tests/unit/schemas/test_knowledge.py`
-- Create: `tests/unit/services/test_knowledge.py`
-- Create: `tests/integration/db/test_knowledge.py`
-- Create: `tests/api/test_knowledge_bases.py`
-- Modify: `backend/app/core/config.py`, `backend/app/models/__init__.py`, `backend/app/main.py`
-- Modify: `alembic/env.py`, `tests/conftest.py`, `tests/unit/core/test_config.py`, `.gitignore`
-- Local only: `docs/learning/phase-5-task-1-knowledge-upload.md`
+**涉及文件：**
+- 新建： `backend/app/models/knowledge.py`
+- 新建： `backend/app/schemas/knowledge.py`
+- 新建： `backend/app/services/knowledge.py`
+- 新建： `backend/app/api/v1/knowledge_bases.py`
+- 新建： `alembic/versions/0004_create_rag_tables.py`
+- 新建： `tests/unit/models/test_knowledge.py`
+- 新建： `tests/unit/schemas/test_knowledge.py`
+- 新建： `tests/unit/services/test_knowledge.py`
+- 新建： `tests/integration/db/test_knowledge.py`
+- 新建： `tests/api/test_knowledge_bases.py`
+- 修改： `backend/app/core/config.py`, `backend/app/models/__init__.py`, `backend/app/main.py`
+- 修改： `alembic/env.py`, `tests/conftest.py`, `tests/unit/core/test_config.py`, `.gitignore`
+- 仅本地： `docs/learning/phase-5-task-1-knowledge-upload.md`
 
-**Interfaces:**
-- Consumes: `Base`, `Settings`, `AppError`, `get_db_session()`, `get_current_user()`, `require_roles()`, `Role`, `AsyncSession`, and existing pagination/error conventions.
-- Produces: `KnowledgeBase`, `KnowledgeDocument`, `KnowledgeQuery`, `KnowledgeDocumentStatus`, `KnowledgeQueryStatus`; schemas and service signatures below; router `/api/v1/knowledge-bases`; pending documents for Task 2.
+**接口契约：**
+- 依赖：`Base`、`Settings`、`AppError`、`get_db_session()`、`get_current_user()`、`require_roles()`、`Role`、`AsyncSession`，以及现有分页与错误处理约定。
+- 提供：`KnowledgeBase`、`KnowledgeDocument`、`KnowledgeQuery`、`KnowledgeDocumentStatus`、`KnowledgeQueryStatus`；下文所列 Schema 和服务签名；路由 `/api/v1/knowledge-bases`；供任务 2 处理的待处理文档。
 
-- [ ] **Step 1: Write failing configuration tests**
+- [ ] **步骤 1：先编写失败的配置测试**
 
-Append to `tests/unit/core/test_config.py`:
+向 `tests/unit/core/test_config.py` 追加以下测试：
 
 ```python
 def test_rag_config_has_safe_local_defaults() -> None:
@@ -119,15 +119,15 @@ def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:
         Settings(_env_file=None, rag_chunk_size=100, rag_chunk_overlap=100)
 ```
 
-- [ ] **Step 2: Run configuration tests RED**
+- [ ] **步骤 2：运行配置测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/core/test_config.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/core/test_config.py -q`
 
-Expected: FAIL because RAG fields and the cross-field validator do not exist.
+预期：由于 RAG 配置字段和跨字段校验器尚不存在，测试失败。
 
-- [ ] **Step 3: Add typed configuration**
+- [ ] **步骤 3：添加带类型的配置**
 
-Add these exact fields to `Settings`:
+向 `Settings` 添加以下确切字段：
 
 ```python
 knowledge_file_root: Path = Path("data/knowledge")
@@ -149,9 +149,9 @@ embedding_timeout_seconds: int = Field(default=60, gt=0)
 embedding_batch_size: int = Field(default=64, gt=0, le=2_048)
 ```
 
-Use `model_validator(mode="after")` to reject `rag_chunk_overlap >= rag_chunk_size`. Reuse existing optional text/secret normalization for `embedding_model` and `embedding_api_key`. Validate nonblank provider, base URL, Chroma host, tenant, and database.
+使用 `model_validator(mode="after")` 拒绝 `rag_chunk_overlap >= rag_chunk_size`。对 `embedding_model` 和 `embedding_api_key` 复用现有可选文本/密钥规范化逻辑。校验供应商、基础 URL、Chroma 主机、租户及数据库名称均非空白。
 
-- [ ] **Step 4: Run configuration tests GREEN and static checks**
+- [ ] **步骤 4：运行配置测试并确认 GREEN，同时执行静态检查**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/core/test_config.py -q
@@ -159,11 +159,11 @@ Use `model_validator(mode="after")` to reject `rag_chunk_overlap >= rag_chunk_si
 .venv\Scripts\mypy.exe backend/app/core/config.py tests/unit/core/test_config.py
 ```
 
-Expected: all commands exit 0.
+预期：所有命令退出码均为 0。
 
-- [ ] **Step 5: Write failing ORM and schema tests**
+- [ ] **步骤 5：先编写失败的 ORM 与 Schema 测试**
 
-Create `test_knowledge.py` model tests for exact table names, foreign keys, enum values, positive/non-negative checks, and unique `(knowledge_base_id, sha256)`. Create schema tests including:
+在 `test_knowledge.py` 中测试确切表名、外键、枚举值、正数/非负数约束以及唯一约束 `(knowledge_base_id, sha256)`。另编写 Schema 测试，至少覆盖：
 
 ```python
 def test_create_name_and_description_are_trimmed() -> None:
@@ -191,15 +191,15 @@ def test_citation_requires_source_coordinates() -> None:
     assert citation.page_number == 1
 ```
 
-- [ ] **Step 6: Run ORM/schema tests RED**
+- [ ] **步骤 6：运行 ORM/Schema 测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/models/test_knowledge.py tests/unit/schemas/test_knowledge.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/models/test_knowledge.py tests/unit/schemas/test_knowledge.py -q`
 
-Expected: import failure because the model and schema modules do not exist.
+预期：模型和 Schema 模块尚不存在，导入失败。
 
-- [ ] **Step 7: Implement the three ORM models**
+- [ ] **步骤 7：实现三个 ORM 模型**
 
-Public enums:
+公开的枚举：
 
 ```python
 class KnowledgeDocumentStatus(StrEnum):
@@ -215,7 +215,7 @@ class KnowledgeQueryStatus(StrEnum):
     FAILURE = "failure"
 ```
 
-Implement `KnowledgeBase`, `KnowledgeDocument`, and `KnowledgeQuery` exactly as design section 5. Use string-backed SQLAlchemy enums and named checks. Add:
+严格按设计文档第 5 节实现 `KnowledgeBase`、`KnowledgeDocument` 和 `KnowledgeQuery`。使用以字符串存储的 SQLAlchemy 枚举和具名检查约束。添加：
 
 ```python
 UniqueConstraint(
@@ -225,11 +225,11 @@ UniqueConstraint(
 )
 ```
 
-Do not add ORM relationships. Export models/enums from `models/__init__.py`; import models in `alembic/env.py`.
+不要添加 ORM 关系。通过 `models/__init__.py` 导出模型和枚举；在 `alembic/env.py` 中导入模型。
 
-- [ ] **Step 8: Implement strict schemas**
+- [ ] **步骤 8：实现严格校验的 Schema**
 
-Create these public schemas with `extra="forbid"` for input/provider data and `from_attributes=True` for ORM reads:
+创建以下公开 Schema：输入和供应商数据设置 `extra="forbid"`，读取 ORM 对象设置 `from_attributes=True`：
 
 ```python
 class KnowledgeBaseCreate(BaseModel): ...
@@ -254,13 +254,13 @@ class KnowledgeQueryRead(BaseModel): ...
 class KnowledgeQueryPage(BaseModel): ...
 ```
 
-Trim name, description, and question. `RetrievedChunk.distance` is 0..2; citation excerpt is at most 300 characters; RAG answer is at most 5000 characters; citations are at most 10.
+去除名称、描述和问题首尾空白。`RetrievedChunk.distance` 范围为 0～2；引用摘录最多 300 字符；RAG 回答最多 5000 字符；引用最多 10 条。
 
-- [ ] **Step 9: Create migration and test cleanup**
+- [ ] **步骤 9：创建迁移并调整测试清理顺序**
 
-Create revision `0004`, down revision `0003`, containing all three tables, indexes, foreign keys, checks, and unique constraints. Downgrade in dependency order: queries, documents, bases.
+创建版本 `0004`、前置版本 `0003` 的迁移，包含三张表及全部索引、外键、检查和唯一约束。降级时按依赖顺序删除：问答、文档、知识库。
 
-Update `tests/conftest.py` cleanup order:
+调整 `tests/conftest.py` 的清理顺序：
 
 ```python
 await connection.execute(delete(KnowledgeQuery))
@@ -271,7 +271,7 @@ await connection.execute(delete(Product))
 await connection.execute(delete(User))
 ```
 
-- [ ] **Step 10: Run ORM/schema/migration-focused GREEN checks**
+- [ ] **步骤 10：运行 ORM/Schema/迁移相关的 GREEN 检查**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/models/test_knowledge.py tests/unit/schemas/test_knowledge.py -q
@@ -279,9 +279,9 @@ await connection.execute(delete(User))
 .venv\Scripts\mypy.exe backend/app/models/knowledge.py backend/app/schemas/knowledge.py tests/unit/models/test_knowledge.py tests/unit/schemas/test_knowledge.py
 ```
 
-- [ ] **Step 11: Write failing safe-storage and persistence tests**
+- [ ] **步骤 11：先编写失败的安全存储与持久化测试**
 
-Required unit cases:
+必需的单元测试场景：
 
 ```python
 def test_validate_upload_rejects_pdf_without_pdf_header() -> None: ...
@@ -291,9 +291,9 @@ def test_stage_document_uses_generated_path_not_user_filename(tmp_path: Path) ->
 def test_failed_database_commit_removes_staged_file(tmp_path: Path) -> None: ...
 ```
 
-The traversal case supplies `../../secret.pdf`, expects display name `secret.pdf`, and asserts the resolved storage path stays under `<root>/<knowledge_base_id>/`.
+路径穿越测试传入 `../../secret.pdf`，预期展示名为 `secret.pdf`，并断言解析后的存储路径位于 `<root>/<knowledge_base_id>/` 之下。
 
-Required integration cases:
+必需的集成测试场景：
 
 ```python
 async def test_create_base_snapshots_embedding_contract(session) -> None: ...
@@ -304,15 +304,15 @@ async def test_document_and_query_must_belong_to_path_base(session) -> None: ...
 async def test_history_pages_are_descending(session) -> None: ...
 ```
 
-- [ ] **Step 12: Run storage/persistence tests RED**
+- [ ] **步骤 12：运行存储/持久化测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_knowledge.py tests/integration/db/test_knowledge.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_knowledge.py tests/integration/db/test_knowledge.py -q`
 
-Expected: FAIL because service functions do not exist.
+预期：服务函数尚不存在，测试失败。
 
-- [ ] **Step 13: Implement safe-file and knowledge services**
+- [ ] **步骤 13：实现安全文件处理与知识库服务**
 
-Public surface:
+公开接口：
 
 ```python
 @dataclass(frozen=True)
@@ -339,15 +339,15 @@ async def list_knowledge_documents(
 ) -> tuple[list[KnowledgeDocument], int]: ...
 ```
 
-Read at most `max_bytes + 1`, close `UploadFile` in `finally`, use `Path(filename).name`, and never use user directories. Resolve and verify containment, write a temporary sibling, then `Path.replace()` atomically. Delete the file if DB commit fails. Catch duplicate `IntegrityError`, rollback, and raise stable `KNOWLEDGE_DOCUMENT_DUPLICATE` 409 without driver text. Ignore `data/knowledge/` in Git.
+最多读取 `max_bytes + 1` 字节，在 `finally` 中关闭 `UploadFile`，使用 `Path(filename).name`，绝不使用用户提供的目录。解析路径并验证其位于受控目录下；先写同目录临时文件，再用 `Path.replace()` 原子替换。数据库提交失败时删除文件。捕获重复上传引发的 `IntegrityError`，回滚并稳定返回 `KNOWLEDGE_DOCUMENT_DUPLICATE` 409，不泄漏驱动错误文本。将 `data/knowledge/` 加入 Git 忽略。
 
-- [ ] **Step 14: Run storage/persistence tests GREEN**
+- [ ] **步骤 14：运行存储/持久化测试并确认 GREEN**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_knowledge.py tests/integration/db/test_knowledge.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_knowledge.py tests/integration/db/test_knowledge.py -q`
 
-Expected: all tests pass; database tests only use configured `marketmind_test`.
+预期：所有测试通过；数据库测试只使用已配置的 `marketmind_test`。
 
-- [ ] **Step 15: Write failing management API tests**
+- [ ] **步骤 15：先编写失败的管理接口测试**
 
 ```python
 def test_admin_creates_knowledge_base_and_receives_201() -> None: ...
@@ -360,17 +360,17 @@ def test_missing_base_returns_stable_404() -> None: ...
 def test_unauthenticated_management_request_returns_401() -> None: ...
 ```
 
-- [ ] **Step 16: Run API tests RED**
+- [ ] **步骤 16：运行接口测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/api/test_knowledge_bases.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/api/test_knowledge_bases.py -q`
 
-Expected: FAIL because the router is not mounted.
+预期：路由尚未挂载，测试失败。
 
-- [ ] **Step 17: Implement and mount management/read endpoints**
+- [ ] **步骤 17：实现并挂载管理与读取接口**
 
-Implement POST collection (201, Admin only), GET collection, GET base, GET documents page, and GET one document under `/knowledge-bases`. Read endpoints require any authenticated user. Always verify nested IDs belong to the path base. Mount under `/api/v1` in `main.py`.
+在 `/knowledge-bases` 下实现：POST 集合接口（201，仅管理员）、GET 集合接口、GET 单个知识库、GET 文档分页列表、GET 单个文档。读取接口允许任意已认证用户访问。始终校验嵌套 ID 属于路径中的知识库。在 `main.py` 中挂载到 `/api/v1`。
 
-- [ ] **Step 18: Run complete Task 1 verification**
+- [ ] **步骤 18：完整验证任务 1**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/core/test_config.py tests/unit/models/test_knowledge.py tests/unit/schemas/test_knowledge.py tests/unit/services/test_knowledge.py tests/integration/db/test_knowledge.py tests/api/test_knowledge_bases.py -q
@@ -379,11 +379,11 @@ Implement POST collection (201, Admin only), GET collection, GET base, GET docum
 git diff --check
 ```
 
-- [ ] **Step 19: Write Task 1 learning document**
+- [ ] **步骤 19：编写任务 1 学习文档**
 
-Write local `docs/learning/phase-5-task-1-knowledge-upload.md`: actual RED/GREEN outputs, file responsibilities, imports, model constraints, migration order, generated paths, UploadFile ownership, atomic replace, DB/file compensation, RBAC, errors, final code by focused section, and line-by-line explanation of execution-affecting code. Keep it untracked.
+编写本地文档 `docs/learning/phase-5-task-1-knowledge-upload.md`：记录真实 RED/GREEN 输出、文件职责、导入来源、模型约束、迁移顺序、生成路径、`UploadFile` 资源所有权、原子替换、数据库/文件补偿、RBAC、错误处理、按重点分节的最终代码，以及影响执行的代码逐行解释。保持未跟踪。
 
-- [ ] **Step 20: Commit Task 1 exactly**
+- [ ] **步骤 20：精确提交任务 1**
 
 ```powershell
 git add -- .gitignore backend/app/core/config.py backend/app/models/__init__.py backend/app/models/knowledge.py backend/app/schemas/knowledge.py backend/app/services/knowledge.py backend/app/api/v1/knowledge_bases.py backend/app/main.py alembic/env.py alembic/versions/0004_create_rag_tables.py tests/conftest.py tests/unit/core/test_config.py tests/unit/models/test_knowledge.py tests/unit/schemas/test_knowledge.py tests/unit/services/test_knowledge.py tests/integration/db/test_knowledge.py tests/api/test_knowledge_bases.py
@@ -392,31 +392,31 @@ git diff --cached --check
 git commit -m "feat: add RAG knowledge base persistence"
 ```
 
-Expected: learning and pre-existing local files are absent from the staged list.
+预期：暂存列表中不包含学习文档和已有本地文件。
 
 ---
 
-### Task 2: Parsing, chunking, Embedding, Chroma, and asynchronous indexing
+### 任务 2：文档解析、分块、Embedding、Chroma 与异步索引
 
-**Deliverable:** Admin upload returns 202; Celery turns pending into ready/failure using safe parsing, deterministic chunks, validated embeddings, Chroma upsert, Redis locking, and bounded retries.
+**交付内容：** 管理员上传后收到 202；Celery 通过安全解析、确定性分块、向量校验、Chroma 更新写入、Redis 锁和有限重试，将待处理文档转为就绪或失败状态。
 
-**Files:**
-- Create: `backend/app/db/chroma.py`
-- Create: `backend/app/services/document_ingestion.py`
-- Create: `backend/app/tasks/knowledge.py`
-- Create: `tests/unit/db/test_chroma.py`
-- Create: `tests/unit/services/test_document_ingestion.py`
-- Create: `tests/unit/tasks/test_knowledge.py`
-- Modify: `pyproject.toml`, `.env.example`
-- Modify: `backend/app/services/knowledge.py`, `backend/app/api/v1/knowledge_bases.py`, `backend/app/celery_app.py`
-- Modify: `tests/api/test_knowledge_bases.py`
-- Local only: `docs/learning/phase-5-task-2-document-indexing.md`
+**涉及文件：**
+- 新建： `backend/app/db/chroma.py`
+- 新建： `backend/app/services/document_ingestion.py`
+- 新建： `backend/app/tasks/knowledge.py`
+- 新建： `tests/unit/db/test_chroma.py`
+- 新建： `tests/unit/services/test_document_ingestion.py`
+- 新建： `tests/unit/tasks/test_knowledge.py`
+- 修改： `pyproject.toml`, `.env.example`
+- 修改： `backend/app/services/knowledge.py`, `backend/app/api/v1/knowledge_bases.py`, `backend/app/celery_app.py`
+- 修改： `tests/api/test_knowledge_bases.py`
+- 仅本地： `docs/learning/phase-5-task-2-document-indexing.md`
 
-**Interfaces:**
-- Consumes: Task 1 models and document helpers, `redis_lock()`, `create_engine()`, and `create_session_factory()`.
-- Produces: `ParsedSection`, `DocumentChunk`, `EmbeddingCompletion`, `DocumentIngestionError`, parsing/chunking/Embedding/index functions, `run_document_index_attempt()`, and Celery task `index_knowledge_document`.
+**接口契约：**
+- 依赖：任务 1 的模型与文档辅助函数、`redis_lock()`、`create_engine()` 和 `create_session_factory()`。
+- 提供：`ParsedSection`、`DocumentChunk`、`EmbeddingCompletion`、`DocumentIngestionError`、解析/分块/Embedding/索引函数、`run_document_index_attempt()`，以及 Celery 任务 `index_knowledge_document`。
 
-- [ ] **Step 1: Write failing parser/chunker tests**
+- [ ] **步骤 1：先编写失败的解析器与分块测试**
 
 ```python
 def test_parse_txt_normalizes_newlines_and_preserves_text_source() -> None: ...
@@ -430,28 +430,28 @@ def test_pdf_chunks_never_cross_page_boundary() -> None: ...
 def test_more_than_2000_chunks_is_rejected_before_embedding() -> None: ...
 ```
 
-For a forced hard split, compare the final 150 characters of chunk N with the first 150 of chunk N+1.
+针对强制切分场景，比较第 N 块的末尾 150 字符与第 N+1 块的开头 150 字符。
 
-- [ ] **Step 2: Run parser/chunker tests RED**
+- [ ] **步骤 2：运行解析器/分块测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_document_ingestion.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_document_ingestion.py -q`
 
-Expected: import failure because the service does not exist.
+预期：服务模块尚不存在，导入失败。
 
-- [ ] **Step 3: Install only approved dependencies**
+- [ ] **步骤 3：仅安装已批准的依赖**
 
-Add to `pyproject.toml`:
+向 `pyproject.toml` 添加：
 
 ```toml
 "chromadb-client>=1.5,<2.0",
 "pypdf>=6.17,<7.0",
 ```
 
-Run: `uv pip install --python .venv\Scripts\python.exe -e ".[dev]"`
+运行：`uv pip install --python .venv\Scripts\python.exe -e ".[dev]"`
 
-Expected: editable install succeeds on Python 3.12. Record resolved versions in the learning document; do not add another framework.
+预期：可编辑安装在 Python 3.12 上成功。将解析得到的依赖版本记入学习文档，不增加其他框架。
 
-- [ ] **Step 4: Implement parsing/chunking minimally**
+- [ ] **步骤 4：以最小实现完成解析与分块**
 
 ```python
 MAX_CHUNKS_PER_DOCUMENT = 2_000
@@ -484,17 +484,17 @@ def split_sections(
 ) -> list[DocumentChunk]: ...
 ```
 
-Use `PdfReader(path)` and `page.extract_text()`. Normalize CRLF/CR and repeated horizontal whitespace. Search backward from the size limit for paragraph, newline, Chinese sentence punctuation, then `. `; otherwise hard split. Advance by `end - overlap` and require progress. PDF sections never combine pages.
+使用 `PdfReader(path)` 和 `page.extract_text()`。规范化 CRLF/CR 与重复的水平空白。优先从大小上限向前寻找段落、换行、中文句末标点，再寻找 `. `；均不存在时强制切分。下一块从 `end - overlap` 开始，且必须保证位置前进。PDF 不跨页合并。
 
-The only permanent parsing codes are `DOCUMENT_PARSE_ERROR` and
-`DOCUMENT_TOO_MANY_CHUNKS`; use their predefined Chinese messages and never include the
-path, extracted text, or parser exception text.
+永久性解析错误码仅有 `DOCUMENT_PARSE_ERROR` 和
+`DOCUMENT_TOO_MANY_CHUNKS`；使用预设的中文消息，绝不包含
+路径、提取文本或解析器异常原文。
 
-- [ ] **Step 5: Run parser/chunker tests GREEN**
+- [ ] **步骤 5：运行解析器/分块测试并确认 GREEN**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_document_ingestion.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_document_ingestion.py -q`
 
-- [ ] **Step 6: Write failing Chroma and Embedding tests**
+- [ ] **步骤 6：先编写失败的 Chroma 与 Embedding 测试**
 
 `tests/unit/db/test_chroma.py`:
 
@@ -507,7 +507,7 @@ def test_collection_name_is_deterministic() -> None:
 async def test_async_http_client_uses_all_connection_settings(monkeypatch) -> None: ...
 ```
 
-Embedding/index cases:
+Embedding/索引测试场景：
 
 ```python
 async def test_embedding_batches_preserve_provider_index_order() -> None: ...
@@ -519,13 +519,13 @@ async def test_index_deletes_document_then_upserts_deterministic_ids() -> None: 
 async def test_retry_after_partial_write_converges_without_duplicate_ids() -> None: ...
 ```
 
-- [ ] **Step 7: Run Chroma/Embedding tests RED**
+- [ ] **步骤 7：运行 Chroma/Embedding 测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/db/test_chroma.py tests/unit/services/test_document_ingestion.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/db/test_chroma.py tests/unit/services/test_document_ingestion.py -q`
 
-Expected: new functions are absent.
+预期：新函数尚不存在。
 
-- [ ] **Step 8: Implement Chroma client boundary**
+- [ ] **步骤 8：实现 Chroma 客户端边界**
 
 ```python
 def knowledge_collection_name(knowledge_base_id: int) -> str:
@@ -544,9 +544,9 @@ async def create_chroma_client(settings: Settings) -> AsyncClientAPI:
     )
 ```
 
-Keep external construction in one patchable function; do not create a VectorStore interface.
+将外部客户端构造集中在一个可替换的函数中；不要创建 `VectorStore` 接口。
 
-- [ ] **Step 9: Implement validated Embedding and index writes**
+- [ ] **步骤 9：实现经校验的 Embedding 与索引写入**
 
 ```python
 @dataclass(frozen=True)
@@ -570,16 +570,16 @@ async def index_document_vectors(
 ) -> None: ...
 ```
 
-Use `AsyncOpenAI(..., max_retries=0)`, batch by configured size, call `embeddings.create(model=..., input=list(batch))`, sort response by `index`, require exact `0..n-1`, one positive dimension, and all `math.isfinite` values. Map SDK errors to safe codes.
+使用 `AsyncOpenAI(..., max_retries=0)`，按配置批量调用 `embeddings.create(model=..., input=list(batch))`；按 `index` 排序响应，要求索引恰好为 `0..n-1`、所有向量维度相同且为正数、全部数值满足 `math.isfinite`。将 SDK 错误映射为安全错误码。
 
-The complete Embedding/index error set is `DOCUMENT_CONFIG_ERROR`,
+完整的 Embedding/索引错误码包括 `DOCUMENT_CONFIG_ERROR`、
 `EMBEDDING_AUTH_ERROR`, `EMBEDDING_REQUEST_ERROR`, `EMBEDDING_UNAVAILABLE`,
 `EMBEDDING_INVALID_RESPONSE`, `CHROMA_UNAVAILABLE`, and `DOCUMENT_INTERNAL_ERROR`.
-Only unavailable errors are retryable.
+仅服务不可用类错误允许重试。
 
-Create/get Collection with `{"hnsw:space": "cosine"}`; delete `where={"document_id": document.id}` then upsert explicit IDs, vectors, documents, and scalar metadata. Never ask Chroma to embed.
+以 `{"hnsw:space": "cosine"}` 创建或获取集合；先通过 `where={"document_id": document.id}` 删除旧记录，再用显式 ID、向量、文档内容和标量元数据更新写入。不要让 Chroma 自行生成向量。
 
-- [ ] **Step 10: Run Chroma/Embedding GREEN checks**
+- [ ] **步骤 10：运行 Chroma/Embedding 的 GREEN 检查**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/db/test_chroma.py tests/unit/services/test_document_ingestion.py -q
@@ -587,7 +587,7 @@ Create/get Collection with `{"hnsw:space": "cosine"}`; delete `where={"document_
 .venv\Scripts\mypy.exe backend/app/db/chroma.py backend/app/services/document_ingestion.py tests/unit/db/test_chroma.py tests/unit/services/test_document_ingestion.py
 ```
 
-- [ ] **Step 11: Write failing Worker state-machine tests**
+- [ ] **步骤 11：先编写失败的 Worker 状态机测试**
 
 ```python
 async def test_no_redis_lock_skips_parse_embedding_and_chroma() -> None: ...
@@ -602,13 +602,13 @@ async def test_worker_always_closes_engine_redis_and_chroma() -> None: ...
 def test_celery_registers_knowledge_task_module() -> None: ...
 ```
 
-- [ ] **Step 12: Run Worker tests RED**
+- [ ] **步骤 12：运行 Worker 测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/tasks/test_knowledge.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/tasks/test_knowledge.py -q`
 
-- [ ] **Step 13: Implement state helpers and Celery task**
+- [ ] **步骤 13：实现状态辅助函数与 Celery 任务**
 
-Service helpers:
+服务辅助函数：
 
 ```python
 async def mark_document_processing(
@@ -622,7 +622,7 @@ async def mark_document_failure(
 ) -> KnowledgeDocument | None: ...
 ```
 
-Task module:
+任务模块：
 
 ```python
 DOCUMENT_LOCK_PREFIX = "marketmind:lock:knowledge-document"
@@ -642,13 +642,13 @@ def run_document_index_task(task: Task, document_id: int) -> dict[str, int | str
 def index_knowledge_document(self: Task, document_id: int) -> dict[str, int | str]: ...
 ```
 
-Order: validate config → create Redis/Engine/Chroma → lock → short Session marks processing/detaches state → parse → split → Embed → delete/upsert → new Session marks ready. Close owned resources in `finally`. Retry connection/timeout/limit/5xx/Redis/MySQL/Chroma availability with `2**retries`; persist safe permanent/exhausted failure. Add module to Celery `include`.
+执行顺序：校验配置 → 创建 Redis/Engine/Chroma → 获取锁 → 用短 Session 标记处理中并脱离数据库状态 → 解析 → 分块 → 生成 Embedding → 删除旧向量/更新写入 → 用新 Session 标记就绪。在 `finally` 中关闭自己创建的资源。连接、超时、限流、5xx、Redis/MySQL/Chroma 不可用时按 `2**retries` 重试；永久失败或重试耗尽时持久化安全错误。将任务模块加入 Celery 的 `include`。
 
-- [ ] **Step 14: Run Worker tests GREEN**
+- [ ] **步骤 14：运行 Worker 测试并确认 GREEN**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/tasks/test_knowledge.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/tasks/test_knowledge.py -q`
 
-- [ ] **Step 15: Write failing upload API tests**
+- [ ] **步骤 15：先编写失败的上传接口测试**
 
 ```python
 def test_admin_upload_returns_202_document_task_and_pending_status() -> None: ...
@@ -661,17 +661,17 @@ def test_broker_failure_marks_document_failure_and_returns_503() -> None: ...
 def test_upload_uses_no_real_embedding_or_chroma_call() -> None: ...
 ```
 
-- [ ] **Step 16: Run upload API RED**
+- [ ] **步骤 16：运行上传接口测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/api/test_knowledge_bases.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/api/test_knowledge_bases.py -q`
 
-Expected: upload cases return 404/405.
+预期：上传接口目前返回 404/405。
 
-- [ ] **Step 17: Implement upload and dispatch compensation**
+- [ ] **步骤 17：实现上传及投递失败补偿**
 
-Add Admin-only multipart POST `/{knowledge_base_id}/documents`, response `KnowledgeDocumentCreated`, status 202. Validate and stage, call `index_knowledge_document.delay(document.id)`, attach task ID, and return pending row. Broker failure saves `DOCUMENT_INTERNAL_ERROR` / `文档任务投递失败` then raises `KNOWLEDGE_DOCUMENT_DISPATCH_FAILED` 503. Keep the staged file for diagnosis/retry.
+新增仅管理员可调用的 multipart POST `/{knowledge_base_id}/documents`，返回 `KnowledgeDocumentCreated`，状态码 202。校验并暂存文件，调用 `index_knowledge_document.delay(document.id)`，关联任务 ID，再返回待处理记录。消息代理投递失败时保存 `DOCUMENT_INTERNAL_ERROR` / `文档任务投递失败`，随后抛出 `KNOWLEDGE_DOCUMENT_DISPATCH_FAILED` 503。保留暂存文件供排查和重试。
 
-- [ ] **Step 18: Run complete Task 2 verification**
+- [ ] **步骤 18：完整验证任务 2**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/db/test_chroma.py tests/unit/services/test_document_ingestion.py tests/unit/tasks/test_knowledge.py tests/api/test_knowledge_bases.py -q
@@ -680,11 +680,11 @@ Add Admin-only multipart POST `/{knowledge_base_id}/documents`, response `Knowle
 git diff --check
 ```
 
-- [ ] **Step 19: Write Task 2 learning document**
+- [ ] **步骤 19：编写任务 2 学习文档**
 
-Write local `docs/learning/phase-5-task-2-document-indexing.md`: pypdf limitations, character chunking, overlap progress, Embedding response order, finite/dimension validation, thin-client explicit embeddings, cosine distance, delete/upsert idempotency, at-least-once costs, resource ownership, retries, actual RED/GREEN failures, and final code explanation. Keep it untracked.
+编写本地文档 `docs/learning/phase-5-task-2-document-indexing.md`：说明 pypdf 的限制、按字符分块、重叠区间的前进条件、Embedding 响应顺序、有限数值/维度校验、轻量客户端传入显式向量、余弦距离、删除/更新写入的幂等性、至少一次投递的成本、资源所有权、重试、真实 RED/GREEN 失败，以及最终代码解释。保持未跟踪。
 
-- [ ] **Step 20: Commit Task 2 exactly**
+- [ ] **步骤 20：精确提交任务 2**
 
 ```powershell
 git add -- pyproject.toml .env.example backend/app/db/chroma.py backend/app/services/document_ingestion.py backend/app/services/knowledge.py backend/app/tasks/knowledge.py backend/app/api/v1/knowledge_bases.py backend/app/celery_app.py tests/unit/db/test_chroma.py tests/unit/services/test_document_ingestion.py tests/unit/tasks/test_knowledge.py tests/api/test_knowledge_bases.py
@@ -695,25 +695,25 @@ git commit -m "feat: index knowledge documents in Chroma"
 
 ---
 
-### Task 3: Evidence-filtered RAG answering, verified citations, and MySQL history
+### 任务 3：基于证据的 RAG 问答、经验证的引用与 MySQL 历史
 
-**Deliverable:** Every authenticated role can ask one knowledge base a question; weak evidence refuses without Chat, while strong evidence produces a validated answer with program-generated citations and persisted Token usage.
+**交付内容：** 所有已认证角色均可向单个知识库提问；证据不足时不调用 Chat，直接拒答；证据充分时生成经校验的回答和由程序构建的引用，并持久化 Token 用量。
 
-**Files:**
-- Create: `backend/app/services/rag.py`
-- Create: `tests/unit/services/test_rag.py`
-- Modify: `backend/app/services/knowledge.py`, `backend/app/schemas/knowledge.py`
-- Modify: `backend/app/api/v1/knowledge_bases.py`
-- Modify: `tests/integration/db/test_knowledge.py`, `tests/api/test_knowledge_bases.py`
-- Local only: `docs/learning/phase-5-task-3-rag-question-answering.md`
+**涉及文件：**
+- 新建： `backend/app/services/rag.py`
+- 新建： `tests/unit/services/test_rag.py`
+- 修改： `backend/app/services/knowledge.py`, `backend/app/schemas/knowledge.py`
+- 修改： `backend/app/api/v1/knowledge_bases.py`
+- 修改： `tests/integration/db/test_knowledge.py`, `tests/api/test_knowledge_bases.py`
+- 仅本地： `docs/learning/phase-5-task-3-rag-question-answering.md`
 
-**Interfaces:**
-- Consumes: `request_embeddings()`, `create_chroma_client()`, `knowledge_collection_name()`, Task 1 ORM/history services, current `LLM_*` settings, and Chroma `ids/documents/metadatas/distances`.
-- Produces: `RAGCallError`, `RAGCompletion`, `retrieve_chunks()`, `build_rag_messages()`, `request_rag_answer()`, `answer_knowledge_question()`, plus question/history endpoints; Task 4 evaluation reuses retrieval and citation validation.
+**接口契约：**
+- 依赖：`request_embeddings()`、`create_chroma_client()`、`knowledge_collection_name()`、任务 1 的 ORM/历史服务、现有 `LLM_*` 配置，以及 Chroma 的 `ids/documents/metadatas/distances`。
+- 提供：`RAGCallError`、`RAGCompletion`、`retrieve_chunks()`、`build_rag_messages()`、`request_rag_answer()`、`answer_knowledge_question()`，以及问答/历史接口；任务 4 的评估复用检索与引用校验。
 
-- [ ] **Step 1: Write failing retrieval/readiness tests**
+- [ ] **步骤 1：先编写失败的检索与就绪状态测试**
 
-Create a fake async Collection and pin:
+创建模拟异步 Collection，并固定以下行为：
 
 ```python
 async def test_retrieve_queries_only_requested_collection() -> None: ...
@@ -725,15 +725,15 @@ async def test_embedding_contract_drift_stops_before_embedding() -> None: ...
 async def test_embedding_dimension_mismatch_stops_before_chroma() -> None: ...
 ```
 
-The readiness case returns a missing ID, one processing document, and one ready document; only the ready hit survives.
+就绪状态测试返回一个不存在的 ID、一个处理中的文档和一个就绪文档；只有就绪文档的命中可以保留。
 
-- [ ] **Step 2: Run retrieval tests RED**
+- [ ] **步骤 2：运行检索测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q`
 
-Expected: import failure because `app.services.rag` does not exist.
+预期：`app.services.rag` 尚不存在，导入失败。
 
-- [ ] **Step 3: Implement retrieval normalization**
+- [ ] **步骤 3：实现检索结果规范化**
 
 ```python
 RAG_PROMPT_VERSION = "rag-answer-v1"
@@ -754,13 +754,13 @@ async def retrieve_chunks(
 ) -> list[RetrievedChunk]: ...
 ```
 
-Query the collection with explicit question vector and include documents, metadatas, distances. Validate the three parallel lists, scalar metadata, base ID, finite distance, and threshold. Query MySQL once for all candidate IDs with `status == READY`; discard all others while preserving Chroma rank order.
+使用显式问题向量查询集合，并请求文档、元数据和距离。校验三组并行列表、标量元数据、知识库 ID、有限距离和阈值。一次性查询 MySQL 中所有候选 ID，只保留 `status == READY` 的文档，同时维持 Chroma 原始排序。
 
-- [ ] **Step 4: Run retrieval tests GREEN**
+- [ ] **步骤 4：运行检索测试并确认 GREEN**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q`
 
-- [ ] **Step 5: Write failing Prompt/output/citation tests**
+- [ ] **步骤 5：先编写失败的提示词、输出和引用测试**
 
 ```python
 def test_prompt_keeps_question_and_chunks_out_of_system_instructions() -> None: ...
@@ -775,13 +775,13 @@ async def test_answer_and_embedding_token_usage_are_combined() -> None: ...
 async def test_provider_errors_map_to_safe_status_without_secret_text() -> None: ...
 ```
 
-- [ ] **Step 6: Run Prompt/answer tests RED**
+- [ ] **步骤 6：运行提示词/回答测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q`
 
-Expected: new cases fail because Prompt and Chat functions are absent.
+预期：提示词和 Chat 函数尚不存在，新测试失败。
 
-- [ ] **Step 7: Implement Prompt, Chat, and citation mapping**
+- [ ] **步骤 7：实现提示词、Chat 与引用映射**
 
 ```python
 @dataclass(frozen=True)
@@ -807,15 +807,15 @@ async def request_rag_answer(
 ) -> RAGCompletion: ...
 ```
 
-System instructions state that question/chunks are untrusted, only numbered evidence may be used, tools/network are unavailable, and output is JSON with `answer`, `cited_chunk_numbers`, `refused`. Put untrusted payload in the user message as JSON.
+系统指令声明问题和文档块均是不可信数据，只能使用编号证据，不可使用工具或网络；输出为包含 `answer`、`cited_chunk_numbers`、`refused` 的 JSON。将不可信内容以 JSON 放在用户消息中。
 
-Use `AsyncOpenAI(..., max_retries=0)` and Chat Completions JSON Mode. Parse with `RAGModelResult.model_validate(..., strict=True)`. A non-refusal needs at least one unique integer in `1..len(chunks)`; a refusal needs none. Map citations only from selected `RetrievedChunk` objects, never model source text.
+使用 `AsyncOpenAI(..., max_retries=0)` 和 Chat Completions JSON Mode。通过 `RAGModelResult.model_validate(..., strict=True)` 解析。非拒答必须引用 `1..len(chunks)` 中至少一个不重复的整数；拒答不得带引用。只从选中的 `RetrievedChunk` 对象生成引用，绝不采用模型输出的来源文字。
 
-Map missing/drifted configuration to `RAG_CONFIG_MISSING`/503, transient provider or
-Chroma failure to `RAG_PROVIDER_UNAVAILABLE`/503, and malformed or unverifiable model
-output to `RAG_INVALID_RESPONSE`/502. Persist only these stable codes and messages.
+将缺失或漂移的配置映射为 `RAG_CONFIG_MISSING`/503，将临时供应商或
+Chroma 故障映射为 `RAG_PROVIDER_UNAVAILABLE`/503，将格式错误或无法验证的模型
+输出映射为 `RAG_INVALID_RESPONSE`/502。只持久化这些稳定的错误码和消息。
 
-- [ ] **Step 8: Run RAG unit tests GREEN and static checks**
+- [ ] **步骤 8：运行 RAG 单元测试并确认 GREEN，同时执行静态检查**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py -q
@@ -823,7 +823,7 @@ output to `RAG_INVALID_RESPONSE`/502. Persist only these stable codes and messag
 .venv\Scripts\mypy.exe backend/app/services/rag.py tests/unit/services/test_rag.py
 ```
 
-- [ ] **Step 9: Write failing history/orchestration integration tests**
+- [ ] **步骤 9：先编写失败的历史与编排集成测试**
 
 ```python
 async def test_success_query_persists_verified_citations_and_usage(session) -> None: ...
@@ -834,9 +834,9 @@ async def test_query_history_is_descending_and_paginated(session) -> None: ...
 async def test_external_calls_run_without_open_database_transaction() -> None: ...
 ```
 
-- [ ] **Step 10: Implement query history and orchestration**
+- [ ] **步骤 10：实现问答历史与流程编排**
 
-Add to `knowledge.py`:
+向 `knowledge.py` 添加：
 
 ```python
 async def create_query_history(
@@ -851,7 +851,7 @@ async def list_knowledge_queries(
 ) -> tuple[list[KnowledgeQuery], int]: ...
 ```
 
-Add to `rag.py`:
+向 `rag.py` 添加：
 
 ```python
 async def answer_knowledge_question(
@@ -863,13 +863,13 @@ async def answer_knowledge_question(
 ) -> KnowledgeQuery: ...
 ```
 
-Load base and ready-document existence, end the read transaction, call question Embedding, create Chroma, retrieve, close Chroma, refuse without Chat for no hits, otherwise call Chat, and persist one terminal query in a new short transaction. On provider/Chroma errors persist stable code/message before raising `AppError`. Do not store raw responses.
+加载知识库并检查是否存在就绪文档，结束读取事务；调用问题 Embedding，创建 Chroma 客户端并检索，随后关闭 Chroma。无命中时不调用 Chat、直接拒答；有命中时调用 Chat；最后在新的短事务中持久化一条终态问答记录。供应商或 Chroma 出错时，先持久化稳定错误码和消息，再抛出 `AppError`。不要存储原始响应。
 
-- [ ] **Step 11: Run history integration GREEN**
+- [ ] **步骤 11：运行历史集成测试并确认 GREEN**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/integration/db/test_knowledge.py tests/unit/services/test_rag.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/integration/db/test_knowledge.py tests/unit/services/test_rag.py -q`
 
-- [ ] **Step 12: Write failing question API/RBAC tests**
+- [ ] **步骤 12：先编写失败的问答接口与 RBAC 测试**
 
 ```python
 @pytest.mark.parametrize("role", list(Role))
@@ -883,15 +883,15 @@ def test_all_roles_can_list_and_read_query_history(role: Role) -> None: ...
 def test_query_from_other_base_returns_404() -> None: ...
 ```
 
-- [ ] **Step 13: Run question API RED**
+- [ ] **步骤 13：运行问答接口测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/api/test_knowledge_bases.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/api/test_knowledge_bases.py -q`
 
-- [ ] **Step 14: Implement question/history endpoints**
+- [ ] **步骤 14：实现问答与历史接口**
 
-Add authenticated POST `/{knowledge_base_id}/questions`, GET question page, and GET one query. All roles use `get_current_user`. Create `Settings()` only at the API boundary and pass it to the service. Return the persisted row so immediate response equals later history.
+新增经认证的 POST `/{knowledge_base_id}/questions`、GET 问答分页列表和 GET 单条问答。所有角色均使用 `get_current_user`。仅在 API 边界创建 `Settings()` 并传入服务。返回已持久化记录，使即时响应与后续历史查询一致。
 
-- [ ] **Step 15: Run complete Task 3 verification**
+- [ ] **步骤 15：完整验证任务 3**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/services/test_rag.py tests/integration/db/test_knowledge.py tests/api/test_knowledge_bases.py -q
@@ -900,11 +900,11 @@ Add authenticated POST `/{knowledge_base_id}/questions`, GET question page, and 
 git diff --check
 ```
 
-- [ ] **Step 16: Write Task 3 learning document**
+- [ ] **步骤 16：编写任务 3 学习文档**
 
-Write local `docs/learning/phase-5-task-3-rag-question-answering.md`: query Embedding, collection isolation, cosine distance, ready post-filtering, injection boundary, JSON Mode versus schema validation, citation provenance, refusal cost saving, AsyncOpenAI, transaction boundaries, failure history, Token accounting, model switching, actual failures, and final code explanation. Keep it untracked.
+编写本地文档 `docs/learning/phase-5-task-3-rag-question-answering.md`：说明问题 Embedding、集合隔离、余弦距离、就绪状态后置过滤、提示词注入边界、JSON Mode 与 Schema 校验的区别、引用来源、拒答节约的成本、`AsyncOpenAI`、事务边界、失败历史、Token 统计、模型切换、实际失败案例及最终代码解释。保持未跟踪。
 
-- [ ] **Step 17: Commit Task 3 exactly**
+- [ ] **步骤 17：精确提交任务 3**
 
 ```powershell
 git add -- backend/app/schemas/knowledge.py backend/app/services/knowledge.py backend/app/services/rag.py backend/app/api/v1/knowledge_bases.py tests/unit/services/test_rag.py tests/integration/db/test_knowledge.py tests/api/test_knowledge_bases.py
@@ -915,23 +915,23 @@ git commit -m "feat: add cited RAG question answering"
 
 ---
 
-### Task 4: RAG evaluation, operations documentation, and full acceptance
+### 任务 4：RAG 评估、运行文档与完整验收
 
-**Deliverable:** A deterministic evaluation service and CLI report Hit@K, MRR, citation validity, refusal accuracy, failures, and latency; documentation explains Chroma/providers; the complete repository passes regression checks.
+**交付内容：** 确定性的评估服务和命令行工具，报告 Hit@K、MRR、引用有效率、拒答准确率、失败数及延迟；文档说明 Chroma 和模型供应商的运维；整个仓库通过回归检查。
 
-**Files:**
-- Create: `backend/app/services/rag_evaluation.py`
-- Create: `scripts/evaluate_rag.py`
-- Create: `tests/unit/services/test_rag_evaluation.py`
-- Modify: `.env.example`, `README.md`
-- Modify existing tests only when a Phase 5 behavior legitimately changes their fixture/import expectations
-- Local only: `docs/learning/phase-5-task-4-evaluation-acceptance.md`
+**涉及文件：**
+- 新建： `backend/app/services/rag_evaluation.py`
+- 新建： `scripts/evaluate_rag.py`
+- 新建： `tests/unit/services/test_rag_evaluation.py`
+- 修改： `.env.example`, `README.md`
+- 仅在阶段 5 的行为确实改变了原有测试的夹具或导入预期时，才修改现有测试。
+- 仅本地： `docs/learning/phase-5-task-4-evaluation-acceptance.md`
 
-**Interfaces:**
-- Consumes: `RetrievedChunk`, verified `KnowledgeCitation`, `retrieve_chunks()`, and Task 3 answer results.
-- Produces: `EvaluationCase`, `CaseEvaluation`, `EvaluationReport`, `reciprocal_rank()`, `evaluate_case()`, `summarize_evaluations()`, and CLI JSON output.
+**接口契约：**
+- 依赖：`RetrievedChunk`、已验证的 `KnowledgeCitation`、`retrieve_chunks()` 和任务 3 的回答结果。
+- 提供：`EvaluationCase`、`CaseEvaluation`、`EvaluationReport`、`reciprocal_rank()`、`evaluate_case()`、`summarize_evaluations()`，以及命令行 JSON 输出。
 
-- [ ] **Step 1: Write failing metric and JSONL tests**
+- [ ] **步骤 1：先编写失败的指标与 JSONL 测试**
 
 ```python
 def test_reciprocal_rank_uses_first_relevant_document() -> None:
@@ -950,13 +950,13 @@ def test_summary_averages_metrics_and_counts_failures() -> None: ...
 def test_invalid_jsonl_reports_line_number_without_full_content(bad_line: str) -> None: ...
 ```
 
-- [ ] **Step 2: Run evaluation tests RED**
+- [ ] **步骤 2：运行评估测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q`
 
-Expected: import failure because the service does not exist.
+预期：服务模块尚不存在，导入失败。
 
-- [ ] **Step 3: Implement typed cases and pure metrics**
+- [ ] **步骤 3：实现带类型的评估用例与纯指标函数**
 
 ```python
 class EvaluationCase(BaseModel):
@@ -993,13 +993,13 @@ def evaluate_case(...) -> CaseEvaluation: ...
 def summarize_evaluations(cases: Sequence[CaseEvaluation]) -> EvaluationReport: ...
 ```
 
-Use stdlib JSON/Path/statistics plus Pydantic. Reject an empty file. Include the 1-based line number in validation errors without echoing the full invalid line.
+使用标准库 JSON/Path/statistics 和 Pydantic。拒绝空文件。校验错误中应包含从 1 开始的行号，但不能回显整行无效输入。
 
-- [ ] **Step 4: Run pure metric tests GREEN**
+- [ ] **步骤 4：运行纯指标测试并确认 GREEN**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q`
 
-- [ ] **Step 5: Write failing CLI/orchestration tests**
+- [ ] **步骤 5：先编写失败的命令行与流程编排测试**
 
 ```python
 async def test_evaluation_runner_reuses_production_rag_path() -> None: ...
@@ -1008,17 +1008,17 @@ def test_cli_does_not_run_without_explicit_live_flag() -> None: ...
 def test_case_failure_is_counted_and_does_not_abort_remaining_cases() -> None: ...
 ```
 
-Without `--live`, the CLI must exit non-zero before creating OpenAI or Chroma clients.
+未传入 `--live` 时，命令行程序必须在创建 OpenAI 或 Chroma 客户端前以非零状态退出。
 
-- [ ] **Step 6: Run CLI tests RED**
+- [ ] **步骤 6：运行命令行测试并确认 RED**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q`
+运行：`.venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q`
 
-- [ ] **Step 7: Implement evaluation runner and guarded CLI**
+- [ ] **步骤 7：实现评估流程与带开关的命令行程序**
 
-The async runner measures each case using `time.perf_counter()`, calls production retrieval/answer boundaries, records one safe error code on a failed case, and continues. Keep formulas pure.
+异步评估器使用 `time.perf_counter()` 测量每个用例，调用生产环境的检索/回答边界；用例失败时记录一个安全错误码并继续。指标公式保持为纯函数。
 
-Create argparse CLI:
+创建 argparse 命令行程序：
 
 ```text
 --knowledge-base-id INTEGER  required and positive
@@ -1027,9 +1027,9 @@ Create argparse CLI:
 --live                       mandatory external-call guard
 ```
 
-Write UTF-8 JSON using `json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2)`. Do not print questions, chunks, credentials, or raw provider errors.
+使用 `json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2)` 写入 UTF-8 JSON。不要打印问题、文档块、凭据或供应商原始错误。
 
-- [ ] **Step 8: Run evaluation GREEN and static checks**
+- [ ] **步骤 8：运行评估 GREEN 检查和静态检查**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/unit/services/test_rag_evaluation.py -q
@@ -1037,20 +1037,20 @@ Write UTF-8 JSON using `json.dumps(report.model_dump(mode="json"), ensure_ascii=
 .venv\Scripts\mypy.exe backend/app/services/rag_evaluation.py scripts/evaluate_rag.py tests/unit/services/test_rag_evaluation.py
 ```
 
-- [ ] **Step 9: Update configuration and operations documentation**
+- [ ] **步骤 9：更新配置与运行文档**
 
-Append every Phase 5 variable from the design to `.env.example`, leaving keys empty. Update README with feature/endpoints, MySQL-versus-Chroma ownership, official Chroma container startup with persistent volume, migration/Worker commands, file restrictions, provider configuration locations, mandatory reindex/new base after changing Embedding, guarded evaluation usage/cost warning, scanned-PDF limitation, and no-paid-call automation statement.
+将设计文档中全部阶段 5 环境变量追加到 `.env.example`，密钥保持为空。更新 README，说明功能与接口、MySQL 和 Chroma 的数据职责、带持久化卷的官方 Chroma 容器启动方法、迁移/Worker 命令、文件限制、供应商配置位置、改变 Embedding 后必须重新索引或新建知识库、带安全开关的评估用法与费用警告、扫描版 PDF 的限制，以及自动化测试不调用付费模型。
 
-- [ ] **Step 10: Run migration-chain and focused API acceptance**
+- [ ] **步骤 10：运行迁移链及定向接口验收**
 
 ```powershell
 .venv\Scripts\alembic.exe -x database=test upgrade head
 .venv\Scripts\python.exe -m pytest tests/integration/db/test_knowledge.py tests/api/test_knowledge_bases.py -q
 ```
 
-Expected: migration reaches `0004`; RAG integration/API tests pass against `marketmind_test`.
+预期：迁移达到 `0004`；针对 `marketmind_test` 的 RAG 集成与接口测试通过。
 
-- [ ] **Step 11: Run full repository quality gate**
+- [ ] **步骤 11：运行全仓库质量门禁**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
@@ -1059,19 +1059,19 @@ Expected: migration reaches `0004`; RAG integration/API tests pass against `mark
 git diff --check
 ```
 
-Expected: zero pytest failures; Ruff, mypy, and Git checks exit 0. Record exact counts and real repairs.
+预期：pytest 零失败；Ruff、mypy 和 Git 检查均以退出码 0 结束。记录确切数量与实际修复。
 
-- [ ] **Step 12: Run secrets and accidental-network audit**
+- [ ] **步骤 12：检查密钥与意外联网风险**
 
-Do not open `.env`. Search tracked implementation surfaces for credential-shaped literals and test constructors. Confirm every test external client is patched or fake-controlled before invocation. The audit must not output actual environment values.
+不要打开 `.env`。在已跟踪的实现文件中搜索疑似凭据字面量和测试中的客户端构造方式。确认所有测试调用前，外部客户端均已被替换或受模拟对象控制。审查输出不得包含真实环境变量值。
 
-- [ ] **Step 13: Write Task 4 tutorial and finalize all Phase 5 tutorials**
+- [ ] **步骤 13：编写任务 4 教程并完善全部阶段 5 教程**
 
-Write local `docs/learning/phase-5-task-4-evaluation-acceptance.md`: formulas with worked examples, JSONL, CLI guard, model-switch table, Chroma operations, migration/full-test evidence, actual failures/fixes, complete data/transaction/task sequence, security/cost limitations, resume-ready summary, interview questions, and manual acceptance checklist marked unexecuted unless approved.
+编写本地文档 `docs/learning/phase-5-task-4-evaluation-acceptance.md`：包含带计算示例的公式、JSONL、命令行安全开关、模型切换表、Chroma 运维、迁移与全量测试证据、真实失败与修复、完整数据/事务/任务执行顺序、安全与成本限制、可接续工作摘要、面试问题，以及标注为尚未执行的人工验收清单（除非已获批准）。
 
-Re-open the other three Phase 5 tutorials and ensure they include final code, file/line responsibilities, import provenance, writing order, framework mechanisms, evidence, and debugging history. Keep all four untracked.
+重新检查前面三份阶段 5 教程，确保包含最终代码、文件/行职责、导入来源、编写顺序、框架机制、验证证据与排错历史。四份教程均保持未跟踪。
 
-- [ ] **Step 14: Commit Task 4 exactly**
+- [ ] **步骤 14：精确提交任务 4**
 
 ```powershell
 git add -- .env.example README.md backend/app/services/rag_evaluation.py scripts/evaluate_rag.py tests/unit/services/test_rag_evaluation.py
@@ -1080,7 +1080,7 @@ git diff --cached --check
 git commit -m "feat: add RAG evaluation and operations guide"
 ```
 
-- [ ] **Step 15: Prepare final review evidence**
+- [ ] **步骤 15：整理最终复核证据**
 
 ```powershell
 git merge-base main HEAD
@@ -1090,8 +1090,8 @@ git diff --stat main...HEAD
 git status --short
 ```
 
-Use `superpowers:requesting-code-review` for one independent whole-branch review. Explicit review focus: the five items above, MySQL/file/Chroma compensation, async resource ownership, provider error secrecy, migration downgrade order, and mocked external calls. Every Critical/Important finding gets a new failing test, observed RED, GREEN fix, full quality gate, and fix commit. Record Minor findings without silently expanding scope.
+使用 `superpowers:requesting-code-review` 对整个分支进行一次独立复核。明确关注上文五项风险、MySQL/文件/Chroma 的补偿处理、异步资源所有权、供应商错误信息保密、迁移降级顺序及模拟外部调用。每项 Critical/Important 问题都须新增失败测试、观察 RED、完成 GREEN 修复、运行全量质量门禁并提交修复；记录 Minor 问题，不悄悄扩大范围。
 
-## Manual acceptance excluded from automated completion
+## 自动化完成范围之外的人工验收
 
-Mocked deterministic tests can complete engineering. A paid live acceptance needs separate explicit approval. When approved, index one small document and ask one answerable plus one unanswerable question; verify MySQL rows and Chroma citations without printing `.env` or credentials.
+确定性的模拟测试可以完成工程验收。付费的真实环境验收仍需另行明确批准。获得批准后，索引一份小文档，分别提出一个可回答和一个不可回答的问题；核查 MySQL 记录与 Chroma 引用，且不得打印 `.env` 或凭据。

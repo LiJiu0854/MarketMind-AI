@@ -1,6 +1,6 @@
 # 阶段 2：Redis 与任务基础设施实施计划
 
-> **执行要求：** 本计划按当前“学习者手写核心逻辑、助手提供骨架并逐单元验收”的模式执行。每个 Task 开始前生成完整中文教程，每个单元通过后再进入下一单元。
+> **执行要求：** 本计划按当前“学习者手写核心逻辑、助手提供骨架并逐单元验收”的模式执行。每个任务 开始前生成完整中文教程，每个单元通过后再进入下一单元。
 
 **目标：** 为 MarketMind AI 增加 Redis 缓存、幂等、限流、分布式锁以及 Celery 后台任务能力。
 
@@ -12,14 +12,14 @@
 
 ## 全局约束
 
-- 阶段固定为 4 个 Task、18 个学习单元。
+- 阶段固定为 4 个任务、18 个学习单元。
 - 运行依赖只新增 `redis>=6.4,<6.5` 和 `celery>=5.6,<5.7`。
 - 真实密码只写入 `.env`；`.env.example` 只保存无秘密模板。
 - Redis 开发端口只绑定 `127.0.0.1`，不得直接暴露到局域网。
 - DB 0 用于缓存、幂等、限流和锁；DB 1 用作 Broker；DB 2 用作 Result Backend。
 - Redis 集成测试必须使用独立测试逻辑库，不允许清空开发库。
 - 核心逻辑由学习者手写；重复配置、导入整理和无学习价值的小修复由助手完成。
-- 每个单元依次经过 RED、GREEN、Ruff、mypy；每个 Task 结束运行相关回归测试。
+- 每个单元依次经过 RED、GREEN、Ruff、mypy；每个任务 结束运行相关回归测试。
 - 不跨阶段实现商品、Excel、LLM、RAG、Agent、SSE、MCP、Playwright 或前端。
 - 不修改或提交 `docs/learning/phase-0-baseline.md` 和 `tests/unit/models/test_product_practice.py`。
 
@@ -27,7 +27,7 @@
 
 ---
 
-## Task 1：Redis 基础设施（4 个单元）
+## 任务 1：Redis 基础设施（4 个单元）
 
 **学习成果：** 能解释并独立写出 Redis 配置、连接生命周期、依赖注入、基础命令和健康检查。
 
@@ -91,10 +91,10 @@
 - [ ] 修改健康路由，使 readiness 同时检查 MySQL 与 Redis；liveness 不连接外部服务。
 - [ ] 用依赖覆盖或应用状态替换隔离真实 Redis，保证 API 单元测试快速稳定。
 - [ ] 关闭 Redis 容器人工请求 `/api/v1/health/ready`，确认未就绪；重新启动后确认恢复。
-- [ ] 运行 Task 1 全部测试、Ruff、mypy。
-- [ ] 提交 Task 1，提交信息为 `feat: add Redis infrastructure`。
+- [ ] 运行任务 1 全部测试、Ruff、mypy。
+- [ ] 提交任务 1，提交信息为 `feat: add Redis infrastructure`。
 
-**Task 1 验收命令：**
+**任务 1 验收命令：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\core\test_config.py tests\unit\db\test_redis.py tests\api\test_health.py -q
@@ -105,7 +105,7 @@
 
 ---
 
-## Task 2：Cache Aside（4 个单元）
+## 任务 2：Cache Aside（4 个单元）
 
 **学习成果：** 能独立写出缓存 Key、序列化、命中/未命中、回源、TTL 和写后失效链路。
 
@@ -159,10 +159,10 @@
 - [ ] 运行测试，确认异常策略尚不完整而 RED。
 - [ ] 实现缓存错误日志和 MySQL 回退，保持安全异常不会被误吞。
 - [ ] 使用短 TTL 验证删除失败造成的旧值会自动到期。
-- [ ] 运行 Task 2 全部测试、Ruff、mypy。
-- [ ] 提交 Task 2，提交信息为 `feat: add user cache aside`。
+- [ ] 运行任务 2 全部测试、Ruff、mypy。
+- [ ] 提交任务 2，提交信息为 `feat: add user cache aside`。
 
-**Task 2 验收命令：**
+**任务 2 验收命令：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\services\test_user_cache.py tests\api\test_users.py -q
@@ -172,7 +172,7 @@
 
 ---
 
-## Task 3：并发与接口保护（5 个单元）
+## 任务 3：并发与接口保护（5 个单元）
 
 **学习成果：** 能解释 Redis 原子命令，并实现幂等、固定窗口限流和不会误释放的分布式锁。
 
@@ -240,10 +240,10 @@
 - [ ] 连续发送超过上限的登录请求，验证只在窗口内阻止。
 - [ ] 并发获取同一个锁，验证最多一个调用者进入临界区。
 - [ ] 停止 Redis，验证缓存查询可降级，但幂等、限流和锁拒绝绕过。
-- [ ] 运行 Task 3 全部测试、Ruff、mypy。
-- [ ] 提交 Task 3，提交信息为 `feat: add Redis request guards`。
+- [ ] 运行任务 3 全部测试、Ruff、mypy。
+- [ ] 提交任务 3，提交信息为 `feat: add Redis request guards`。
 
-**Task 3 验收命令：**
+**任务 3 验收命令：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\services\test_redis_guards.py tests\api\test_auth.py tests\api\test_users.py -q
@@ -254,7 +254,7 @@
 
 ---
 
-## Task 4：Celery 后台任务（5 个单元）
+## 任务 4：Celery 后台任务（5 个单元）
 
 **学习成果：** 能独立说明任务投递、Broker、Worker、Result Backend、状态查询和失败重试之间的关系。
 
@@ -333,11 +333,11 @@
 - [ ] 停止 Redis，验证投递返回 503、readiness 返回未就绪。
 - [ ] 恢复容器后再次完成任务，确认系统可恢复。
 - [ ] 运行全量 pytest、Ruff、mypy 和 `git diff --check`。
-- [ ] 在 Task 4 教程末尾增加阶段 2 组件关系 Mermaid 流程图。
+- [ ] 在任务 4 教程末尾增加阶段 2 组件关系 Mermaid 流程图。
 - [ ] 完成人工文字题和 Swagger 验收。
-- [ ] 提交 Task 4，提交信息为 `feat: complete phase 2 Redis and task infrastructure`。
+- [ ] 提交任务 4，提交信息为 `feat: complete phase 2 Redis and task infrastructure`。
 
-**Task 4 与阶段总验收命令：**
+**任务 4 与阶段总验收命令：**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
@@ -349,7 +349,7 @@ docker compose ps
 
 ## 提交与合并边界
 
-- 每个 Task 只提交本 Task 的代码、测试和中文学习文档。
+- 每个任务 只提交本任务 的代码、测试和中文学习文档。
 - 阶段开发期间不直接修改 `main`。
-- 阶段 2 的 4 个 Task、自动化验收、文字题和人工运行验收全部通过后，才允许推送阶段分支并请求合并。
+- 阶段 2 的 4 个任务、自动化验收、文字题和人工运行验收全部通过后，才允许推送阶段分支并请求合并。
 - 不使用强制删除分支作为撤销开发手段；需要纠错时保留可审计提交并进行正常修复。
