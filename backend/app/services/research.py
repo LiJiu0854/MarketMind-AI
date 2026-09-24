@@ -1,5 +1,6 @@
 """研究记录的短事务与商品范围边界。"""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -10,11 +11,22 @@ from app.core.errors import AppError
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentStatus
 from app.models.product import Product
 from app.models.research import ResearchRun, ResearchStatus
-from app.schemas.research import ResearchCreate
+from app.schemas.research import ResearchCreate, ResearchEvidence
 from app.services.semantic_reviews import build_product_snapshot
 
 PROMPT_VERSION = "research-v1"
 ACTIVE_STATUSES = (ResearchStatus.PENDING, ResearchStatus.RUNNING)
+
+
+@dataclass(frozen=True)
+class ResearchUsage:
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    embedding_tokens: int | None
+
+
+def _add_usage(previous: int | None, current: int | None) -> int | None:
+    return None if previous is None or current is None else previous + current
 
 
 async def create_research_run(
@@ -164,6 +176,60 @@ async def mark_research_failure(
         run.error_code = code
         run.error_message = message
         run.completed_at = datetime.now(UTC)
+        await session.commit()
+        await session.refresh(run)
+        return run
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def mark_research_running(session: AsyncSession, run_id: int) -> ResearchRun | None:
+    """终态任务不重启；每次真实尝试独立计数。"""
+    try:
+        run = await session.scalar(
+            select(ResearchRun).where(ResearchRun.id == run_id).with_for_update()
+        )
+        if run is None or run.status not in ACTIVE_STATUSES:
+            return None
+        run.status = ResearchStatus.RUNNING
+        run.started_at = run.started_at or datetime.now(UTC)
+        run.attempt_count += 1
+        await session.commit()
+        await session.refresh(run)
+        return run
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def append_research_step(
+    session: AsyncSession,
+    run_id: int,
+    step: dict[str, object],
+    evidence: list[ResearchEvidence],
+    usage: ResearchUsage,
+) -> ResearchRun | None:
+    """每个已验证动作单独提交，供重投从下一步继续。"""
+    try:
+        run = await session.scalar(
+            select(ResearchRun).where(ResearchRun.id == run_id).with_for_update()
+        )
+        if run is None or run.status is not ResearchStatus.RUNNING:
+            return None
+        run.steps = [*run.steps, step]
+        run.evidence = [item.model_dump(mode="json") for item in evidence]
+        run.prompt_tokens = _add_usage(run.prompt_tokens, usage.prompt_tokens)
+        run.completion_tokens = _add_usage(run.completion_tokens, usage.completion_tokens)
+        run.embedding_tokens = _add_usage(run.embedding_tokens, usage.embedding_tokens)
+        if (
+            run.prompt_tokens is not None
+            and run.completion_tokens is not None
+            and run.embedding_tokens is not None
+        ):
+            run.total_tokens = run.prompt_tokens + run.completion_tokens + run.embedding_tokens
+        else:
+            run.total_tokens = None
         await session.commit()
         await session.refresh(run)
         return run

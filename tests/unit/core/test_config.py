@@ -41,6 +41,8 @@ SETTINGS_ENVIRONMENT_VARIABLES = (
     "EMBEDDING_API_KEY",
     "EMBEDDING_TIMEOUT_SECONDS",
     "EMBEDDING_BATCH_SIZE",
+    "RESEARCH_MAX_ACTIONS",
+    "RESEARCH_MAX_EVIDENCE",
     "TEST_DATABASE_URL",
     "REDIS_URL",
     "TEST_REDIS_URL",
@@ -98,6 +100,20 @@ def test_rag_config_has_safe_local_defaults() -> None:
     assert settings.rag_top_k == 5
     assert settings.rag_max_distance == 0.35
     assert settings.embedding_api_key is None
+
+
+def test_research_limits_have_safe_bounds() -> None:
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.research_max_actions == 4
+    assert settings.research_max_evidence == 12
+    for field, invalid in (
+        ("research_max_actions", 1),
+        ("research_max_actions", 9),
+        ("research_max_evidence", 1),
+        ("research_max_evidence", 31),
+    ):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, **{field: invalid})  # type: ignore[arg-type,call-arg]
 
 
 def test_chunk_overlap_must_be_smaller_than_chunk_size() -> None:

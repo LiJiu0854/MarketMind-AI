@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     embedding_api_key: SecretStr | None = None
     embedding_timeout_seconds: int = Field(default=60, gt=0)
     embedding_batch_size: int = Field(default=64, gt=0, le=2_048)
+    research_max_actions: int = Field(default=4, ge=2, le=8)
+    research_max_evidence: int = Field(default=12, ge=2, le=30)
 
     @field_validator(
         "llm_provider",

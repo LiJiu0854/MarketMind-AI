@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -17,11 +17,19 @@ from app.models.research import ResearchRun, ResearchStatus
 from app.models.user import Role
 from app.schemas.knowledge import RetrievedChunk
 from app.schemas.product import ProductCreate
-from app.schemas.research import ResearchCreate
+from app.schemas.research import ResearchAction, ResearchCreate
 from app.schemas.user import UserCreate
 from app.services.document_ingestion import EmbeddingCompletion
 from app.services.products import create_product
-from app.services.research import create_research_run, get_research_run, list_research_runs
+from app.services.research import (
+    ResearchUsage,
+    append_research_step,
+    create_research_run,
+    get_research_run,
+    list_research_runs,
+    mark_research_running,
+)
+from app.services.research_agent import ActionCompletion, run_research_actions
 from app.services.research_tools import search_knowledge
 from app.services.users import create_user
 
@@ -295,3 +303,99 @@ async def test_search_rejects_configuration_drift_before_embedding(
         await search_knowledge(session, run, base_id, "price", changed)
     assert failure.value.status_code == 503
     embedding.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_records_step_and_unknown_usage(session: AsyncSession) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "checkpoint")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    running = await mark_research_running(session, run.id)
+    assert running is not None
+    assert running.attempt_count == 1
+    step = {"number": 1, "action": {"action": "read_product"}, "source_ids": []}
+    saved = await append_research_step(
+        session,
+        run.id,
+        step,
+        [],
+        ResearchUsage(prompt_tokens=None, completion_tokens=2, embedding_tokens=0),
+    )
+    assert saved is not None
+    assert len(saved.steps) == 1
+    assert saved.prompt_tokens is None
+    assert saved.completion_tokens == 2
+    assert saved.embedding_tokens == 0
+    assert saved.total_tokens is None
+    saved = await append_research_step(
+        session,
+        run.id,
+        {"number": 2, "action": {"action": "finish"}, "source_ids": []},
+        [],
+        ResearchUsage(prompt_tokens=3, completion_tokens=1, embedding_tokens=0),
+    )
+    assert saved is not None
+    assert saved.prompt_tokens is None
+    assert saved.completion_tokens == 3
+    assert saved.total_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_research_is_not_restarted(session: AsyncSession) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "terminal")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    run.status = ResearchStatus.FAILURE
+    await session.commit()
+    assert await mark_research_running(session, run.id) is None
+
+
+@pytest.mark.asyncio
+async def test_action_loop_resumes_after_committed_finish_without_repeating_tool(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "loop")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    decisions = AsyncMock(
+        side_effect=[
+            ActionCompletion(ResearchAction(action="read_product"), 4, 1),
+            ActionCompletion(ResearchAction(action="finish"), 3, 1),
+        ]
+    )
+    monkeypatch.setattr("app.services.research_agent.request_research_action", decisions)
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    first = await run_research_actions(run.id, sessions, settings())
+    assert first is not None
+    assert [step["action"] for step in first.steps] == [
+        {"action": "read_product"},
+        {"action": "finish"},
+    ]
+    assert len(first.evidence) == 1
+    assert first.prompt_tokens == 7
+    assert first.completion_tokens == 2
+    assert first.total_tokens == 9
+    second = await run_research_actions(run.id, sessions, settings())
+    assert second is not None
+    assert len(second.steps) == 2
+    assert decisions.await_count == 2

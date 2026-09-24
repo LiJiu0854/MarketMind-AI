@@ -133,3 +133,32 @@ class ResearchEvidence(BaseModel):
 class ToolResult(BaseModel):
     evidence: list[ResearchEvidence]
     embedding_tokens: int | None = Field(default=0, ge=0)
+
+
+class ResearchAction(BaseModel):
+    """模型唯一允许提出的三种动作。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["read_product", "search_knowledge", "finish"]
+    knowledge_base_id: int | None = Field(default=None, gt=0, strict=True)
+    query: str | None = Field(default=None, min_length=1, max_length=300)
+
+    @field_validator("query")
+    @classmethod
+    def trim_query(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("检索词不能为空")
+        return value
+
+    @model_validator(mode="after")
+    def verify_shape(self) -> Self:
+        if self.action == "search_knowledge":
+            if self.knowledge_base_id is None or self.query is None:
+                raise ValueError("知识库检索需要 ID 与查询词")
+        elif self.knowledge_base_id is not None or self.query is not None:
+            raise ValueError("此动作不能携带知识库参数")
+        return self

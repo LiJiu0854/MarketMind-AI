@@ -8,11 +8,7 @@ from app.core.config import Settings
 def create_celery_app(settings: Settings | None = None) -> Celery:
     resolved = settings or Settings()
 
-    broker = (
-        resolved.celery_broker_url.get_secret_value()
-        if resolved.celery_broker_url
-        else None
-    )
+    broker = resolved.celery_broker_url.get_secret_value() if resolved.celery_broker_url else None
     backend = (
         resolved.celery_result_backend.get_secret_value()
         if resolved.celery_result_backend
@@ -23,7 +19,12 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         "marketmind",
         broker=broker,
         backend=backend,
-        include=["app.tasks.user_stats", "app.tasks.semantic_review", "app.tasks.knowledge"],
+        include=[
+            "app.tasks.user_stats",
+            "app.tasks.semantic_review",
+            "app.tasks.knowledge",
+            "app.tasks.research",
+        ],
     )
     app.conf.update(
         task_serializer="json",
