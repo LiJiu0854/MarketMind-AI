@@ -8,6 +8,7 @@ from app.models.knowledge import (
     KnowledgeQueryStatus,
 )
 from app.models.product import Product
+from app.models.research import ResearchRun, ResearchStatus
 from app.models.semantic_review import SemanticReview
 from app.models.user import User
 
@@ -18,6 +19,8 @@ __all__ = [
     "KnowledgeQuery",
     "KnowledgeQueryStatus",
     "Product",
+    "ResearchRun",
+    "ResearchStatus",
     "SemanticReview",
     "User",
 ]
