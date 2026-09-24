@@ -2,6 +2,7 @@
 
 import asyncio
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import SecretStr
@@ -14,11 +15,14 @@ from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocu
 from app.models.product import Product
 from app.models.research import ResearchRun, ResearchStatus
 from app.models.user import Role
+from app.schemas.knowledge import RetrievedChunk
 from app.schemas.product import ProductCreate
 from app.schemas.research import ResearchCreate
 from app.schemas.user import UserCreate
+from app.services.document_ingestion import EmbeddingCompletion
 from app.services.products import create_product
 from app.services.research import create_research_run, get_research_run, list_research_runs
+from app.services.research_tools import search_knowledge
 from app.services.users import create_user
 
 
@@ -206,3 +210,88 @@ async def test_product_row_lock_serializes_independent_sessions(test_engine: Asy
             await cleanup.execute(delete(Product).where(Product.id == product_id))
             await cleanup.execute(delete(User).where(User.id == actor_id))
             await cleanup.commit()
+
+
+@pytest.mark.asyncio
+async def test_search_rechecks_mysql_document_and_filename(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "tool")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    ready = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base_id)
+    )
+    assert ready is not None
+    unready = KnowledgeDocument(
+        knowledge_base_id=base_id,
+        uploaded_by_id=actor_id,
+        original_name="not-ready.txt",
+        media_type="text/plain",
+        size_bytes=4,
+        sha256="b" * 64,
+        storage_path=f"{base_id}/not-ready.txt",
+        status=KnowledgeDocumentStatus.FAILURE,
+    )
+    session.add(unready)
+    await session.commit()
+    ready_id = ready.id
+    unready_id = unready.id
+    monkeypatch.setattr(
+        "app.services.research_tools.request_embeddings",
+        AsyncMock(return_value=EmbeddingCompletion([[0.1, 0.2, 0.3]], 5, 3)),
+    )
+    monkeypatch.setattr(
+        "app.services.research_tools.create_chroma_client",
+        AsyncMock(return_value=object()),
+    )
+    close = AsyncMock()
+    monkeypatch.setattr("app.services.research_tools.close_chroma_client", close)
+    chunks = [
+        RetrievedChunk(
+            document_id=document_id,
+            original_name="forged.txt",
+            chunk_id=f"document:{document_id}:chunk:0",
+            chunk_index=0,
+            page_number=1,
+            text="verified",
+            distance=0.1,
+        )
+        for document_id in (ready_id, unready_id)
+    ]
+    monkeypatch.setattr(
+        "app.services.research_tools.retrieve_chunks",
+        AsyncMock(return_value=chunks),
+    )
+    result = await search_knowledge(session, run, base_id, "price", settings())
+    assert len(result.evidence) == 1
+    assert result.evidence[0].original_name == "source.txt"
+    assert result.evidence[0].source_id == f"kb:{base_id}:document:{ready_id}:chunk:0"
+    assert result.embedding_tokens == 5
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_configuration_drift_before_embedding(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "drift")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    embedding = AsyncMock()
+    monkeypatch.setattr("app.services.research_tools.request_embeddings", embedding)
+    changed = settings().model_copy(update={"embedding_model": "other"})
+    with pytest.raises(AppError) as failure:
+        await search_knowledge(session, run, base_id, "price", changed)
+    assert failure.value.status_code == 503
+    embedding.assert_not_awaited()

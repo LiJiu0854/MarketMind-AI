@@ -1,7 +1,7 @@
 """研究请求与历史响应的类型边界。"""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -72,3 +72,64 @@ class ResearchPage(BaseModel):
     total: int = Field(ge=0)
     page: int = Field(ge=1)
     page_size: int = Field(ge=1, le=100)
+
+
+class ResearchEvidence(BaseModel):
+    """程序验证并登记的来源，不接受模型生成的坐标。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(min_length=1, max_length=150)
+    source_type: Literal["product", "knowledge"]
+    text: str = Field(min_length=1, max_length=1000)
+    product_id: int | None = Field(default=None, gt=0)
+    knowledge_base_id: int | None = Field(default=None, gt=0)
+    document_id: int | None = Field(default=None, gt=0)
+    chunk_id: str | None = None
+    chunk_index: int | None = Field(default=None, ge=0)
+    page_number: int | None = Field(default=None, ge=1)
+    original_name: str | None = None
+    distance: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def truncate_text(cls, value: object) -> object:
+        return value[:1000] if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def verify_coordinates(self) -> Self:
+        if self.source_type == "product":
+            if (
+                self.product_id is None
+                or self.source_id != f"product:{self.product_id}:snapshot"
+                or any(
+                    value is not None
+                    for value in (
+                        self.knowledge_base_id,
+                        self.document_id,
+                        self.chunk_id,
+                        self.chunk_index,
+                        self.original_name,
+                        self.distance,
+                    )
+                )
+            ):
+                raise ValueError("商品来源坐标无效")
+        elif (
+            self.product_id is not None
+            or self.knowledge_base_id is None
+            or self.document_id is None
+            or self.chunk_index is None
+            or self.chunk_id != f"document:{self.document_id}:chunk:{self.chunk_index}"
+            or self.source_id
+            != f"kb:{self.knowledge_base_id}:document:{self.document_id}:chunk:{self.chunk_index}"
+            or not self.original_name
+            or self.distance is None
+        ):
+            raise ValueError("知识库来源坐标无效")
+        return self
+
+
+class ToolResult(BaseModel):
+    evidence: list[ResearchEvidence]
+    embedding_tokens: int | None = Field(default=0, ge=0)
