@@ -128,4 +128,69 @@ async def test_history_reports_review_state(
     detail = await client.get(f"{path}/{run_id}", headers=admin_headers)
     assert detail.json()["review_status"] == "approved"
     assert detail.json()["review"]["id"] == approved.json()["id"]
-    assert detail.json()["report"] == supported_report()
+    assert detail.json()["report"] == supported_report(product_id)
+
+
+@pytest.mark.asyncio
+async def test_only_approved_report_is_downloadable(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    _, product_id, run_id = await prepared_run(session, "export-approved")
+    _, rejected_product, rejected_run = await prepared_run(session, "export-rejected")
+    _, insufficient_product, insufficient_run = await prepared_run(session, "export-insufficient")
+    insufficient = await session.get_one(ResearchRun, insufficient_run)
+    insufficient.report = {
+        "outcome": "insufficient_evidence",
+        "summary": "资料不足",
+        "findings": [],
+        "recommendations": [],
+        "evidence_gaps": ["缺资料"],
+    }
+    await session.commit()
+    admin = await actor(session, "export-admin", Role.ADMIN)
+    admin_headers = headers(admin)
+    approved_path = f"/api/v1/products/{product_id}/research-runs/{run_id}"
+    rejected_path = f"/api/v1/products/{rejected_product}/research-runs/{rejected_run}"
+    insufficient_path = f"/api/v1/products/{insufficient_product}/research-runs/{insufficient_run}"
+    assert (await client.get(f"{approved_path}/export", headers=admin_headers)).status_code == 409
+    assert (
+        await client.get(f"{insufficient_path}/export", headers=admin_headers)
+    ).status_code == 409
+    rejected = await client.post(
+        f"{rejected_path}/review",
+        json={"decision": "rejected", "comment": "需补证"},
+        headers=admin_headers,
+    )
+    assert rejected.status_code == 200
+    assert (await client.get(f"{rejected_path}/export", headers=admin_headers)).status_code == 409
+    approved = await client.post(
+        f"{approved_path}/review",
+        json={"decision": "approved"},
+        headers=admin_headers,
+    )
+    assert approved.status_code == 200
+    for role in (Role.ADMIN, Role.OPERATOR, Role.ANALYST):
+        reader = await actor(session, f"export-reader-{role.value}", role)
+        response = await client.get(f"{approved_path}/export", headers=headers(reader))
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"].startswith(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert f"research-{run_id}.xlsx" in response.headers["content-disposition"]
+        assert response.content[:2] == b"PK"
+
+
+@pytest.mark.asyncio
+async def test_export_requires_product_scope(client: AsyncClient, session: AsyncSession) -> None:
+    _, product_id, run_id = await prepared_run(session, "export-scope")
+    admin = await actor(session, "export-scope-admin", Role.ADMIN)
+    correct = f"/api/v1/products/{product_id}/research-runs/{run_id}"
+    approved = await client.post(
+        f"{correct}/review",
+        json={"decision": "approved"},
+        headers=headers(admin),
+    )
+    assert approved.status_code == 200
+    assert (await client.get(f"{correct}/export")).status_code == 401
+    wrong = f"/api/v1/products/{product_id + 999}/research-runs/{run_id}/export"
+    assert (await client.get(wrong, headers=headers(admin))).status_code == 404

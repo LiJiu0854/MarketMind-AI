@@ -1,9 +1,11 @@
 """商品研究任务 API。"""
 
+from io import BytesIO
 from typing import Annotated
 
 from celery.exceptions import CeleryError  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import StreamingResponse
 from kombu.exceptions import (  # type: ignore[import-untyped]
     OperationalError as BrokerOperationalError,
 )
@@ -31,7 +33,9 @@ from app.services.research import (
     mark_research_failure,
     set_research_task_id,
 )
+from app.services.research_export import export_research_report
 from app.services.research_review import (
+    get_approved_research_report,
     get_research_review,
     list_research_reviews,
     review_research_report,
@@ -107,3 +111,18 @@ async def review_product_research(
     actor: ResearchAdmin,
 ) -> ResearchReportReview:
     return await review_research_report(session, product_id, run_id, actor.id, payload)
+
+
+@router.get("/{product_id}/research-runs/{run_id}/export")
+async def export_product_research(
+    product_id: int,
+    run_id: int,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> StreamingResponse:
+    run, review = await get_approved_research_report(session, product_id, run_id)
+    content = export_research_report(run, review)
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="research-{run_id}.xlsx"'},
+    )

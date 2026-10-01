@@ -20,11 +20,11 @@ from tests.api.test_research import configured_settings
 from tests.integration.db.test_research import setup_rows
 
 
-def supported_report() -> dict[str, object]:
+def supported_report(product_id: int = 1) -> dict[str, object]:
     return {
         "outcome": "supported",
         "summary": "依据已登记来源",
-        "findings": [{"claim": "可验证发现", "source_ids": ["product:1:snapshot"]}],
+        "findings": [{"claim": "可验证发现", "source_ids": [f"product:{product_id}:snapshot"]}],
         "recommendations": [],
         "evidence_gaps": [],
     }
@@ -40,7 +40,15 @@ async def prepared_run(session: AsyncSession, suffix: str) -> tuple[int, int, in
         configured_settings(),
     )
     run.status = ResearchStatus.SUCCESS
-    run.report = supported_report()
+    run.report = supported_report(product_id)
+    run.evidence = [
+        {
+            "source_id": f"product:{product_id}:snapshot",
+            "source_type": "product",
+            "product_id": product_id,
+            "text": "商品快照",
+        }
+    ]
     await session.commit()
     return actor_id, product_id, run.id
 

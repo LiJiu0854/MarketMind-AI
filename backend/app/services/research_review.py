@@ -12,6 +12,7 @@ from app.models.research import ResearchRun, ResearchStatus
 from app.models.research_review import ResearchReportReview, ResearchReviewDecision
 from app.schemas.research import ResearchReport
 from app.schemas.research_review import ResearchReviewCreate, ResearchReviewStatus
+from app.services.research import get_research_run
 
 
 def _is_reviewable(run: ResearchRun) -> bool:
@@ -113,3 +114,17 @@ def research_review_status(
     if not _is_reviewable(run):
         return ResearchReviewStatus.NOT_REVIEWABLE
     return ResearchReviewStatus.PENDING_REVIEW
+
+
+async def get_approved_research_report(
+    session: AsyncSession, product_id: int, run_id: int
+) -> tuple[ResearchRun, ResearchReportReview]:
+    run = await get_research_run(session, product_id, run_id)
+    review = await get_research_review(session, run_id)
+    if (
+        review is None
+        or review.decision is not ResearchReviewDecision.APPROVED
+        or not _is_reviewable(run)
+    ):
+        raise AppError("RESEARCH_NOT_APPROVED", "研究报告尚未获准导出", 409)
+    return run, review
