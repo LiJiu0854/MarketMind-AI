@@ -1,0 +1,131 @@
+"""Review API permissions, product scope and history display."""
+
+from collections.abc import AsyncIterator
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+from app.api.dependencies import get_db_session
+from app.main import create_app
+from app.models.research import ResearchRun
+from app.models.user import Role
+from app.schemas.research import ResearchCreate
+from app.services.research import create_research_run
+from tests.api.test_research import actor, configured_settings, headers
+from tests.integration.db.test_research_review import prepared_run, supported_report
+
+
+@pytest.fixture(autouse=True)
+def jwt_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JWT_SECRET", "research-test-secret-at-least-32-bytes")
+
+
+@pytest_asyncio.fixture
+async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    app = create_app(configured_settings())
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        yield session
+
+    app.dependency_overrides[get_db_session] = override_session
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as value:
+        yield value
+
+
+@pytest.mark.asyncio
+async def test_admin_reviews_operator_and_analyst_cannot(
+    client: AsyncClient, session: AsyncSession
+) -> None:
+    _, product_id, run_id = await prepared_run(session, "review-api-role")
+    admin = await actor(session, "review-admin", Role.ADMIN)
+    operator = await actor(session, "review-operator", Role.OPERATOR)
+    analyst = await actor(session, "review-analyst", Role.ANALYST)
+    path = f"/api/v1/products/{product_id}/research-runs/{run_id}/review"
+    body = {"decision": "approved"}
+    assert (await client.post(path, json=body)).status_code == 401
+    for denied in (operator, analyst):
+        assert (await client.post(path, json=body, headers=headers(denied))).status_code == 403
+    admin_headers = headers(admin)
+    first = await client.post(path, json=body, headers=admin_headers)
+    assert first.status_code == 200, first.text
+    again = await client.post(path, json=body, headers=admin_headers)
+    assert again.status_code == 200
+    assert again.json()["id"] == first.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_review_requires_product_scope(client: AsyncClient, session: AsyncSession) -> None:
+    _, product_id, run_id = await prepared_run(session, "review-api-scope")
+    admin = await actor(session, "review-scope-admin", Role.ADMIN)
+    response = await client.post(
+        f"/api/v1/products/{product_id + 999}/research-runs/{run_id}/review",
+        json={"decision": "approved"},
+        headers=headers(admin),
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_history_reports_review_state(
+    client: AsyncClient, session: AsyncSession, test_engine: AsyncEngine
+) -> None:
+    actor_id, product_id, run_id = await prepared_run(session, "review-api-history")
+    pending = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(
+            goal="待处理",
+            knowledge_base_ids=[(await session.get_one(ResearchRun, run_id)).knowledge_base_ids[0]],
+        ),
+        configured_settings(),
+    )
+    # The service normally prevents a second active run; here first run is SUCCESS.
+    admin = await actor(session, "review-history-admin", Role.ADMIN)
+    admin_headers = headers(admin)
+    path = f"/api/v1/products/{product_id}/research-runs"
+    before = await client.get(f"{path}/{run_id}", headers=admin_headers)
+    assert before.status_code == 200
+    assert before.json()["review_status"] == "pending_review"
+    assert before.json()["review"] is None
+
+    review_queries = 0
+
+    def count_reviews(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _params: object,
+        _context: object,
+        _many: object,
+    ) -> None:
+        nonlocal review_queries
+        if "research_report_reviews" in statement.lower() and statement.lstrip().lower().startswith(
+            "select"
+        ):
+            review_queries += 1
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", count_reviews)
+    try:
+        listed = await client.get(path, headers=admin_headers)
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", count_reviews)
+    assert listed.status_code == 200
+    assert review_queries == 1
+    states = {item["id"]: item["review_status"] for item in listed.json()["items"]}
+    assert states[run_id] == "pending_review"
+    assert states[pending.id] == "not_ready"
+
+    approved = await client.post(
+        f"{path}/{run_id}/review", json={"decision": "approved"}, headers=admin_headers
+    )
+    assert approved.status_code == 200
+    detail = await client.get(f"{path}/{run_id}", headers=admin_headers)
+    assert detail.json()["review_status"] == "approved"
+    assert detail.json()["review"]["id"] == approved.json()["id"]
+    assert detail.json()["report"] == supported_report()

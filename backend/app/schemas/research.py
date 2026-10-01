@@ -5,7 +5,9 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.research import ResearchStatus
+from app.models.research import ResearchRun, ResearchStatus
+from app.models.research_review import ResearchReportReview
+from app.schemas.research_review import ResearchReviewRead, ResearchReviewStatus
 
 PositiveBaseID = Annotated[int, Field(gt=0, strict=True)]
 EvidenceGap = Annotated[str, Field(min_length=1, max_length=500)]
@@ -66,6 +68,19 @@ class ResearchRead(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    review_status: ResearchReviewStatus = ResearchReviewStatus.NOT_READY
+    review: ResearchReviewRead | None = None
+
+
+def build_research_read(run: ResearchRun, review: ResearchReportReview | None) -> ResearchRead:
+    from app.services.research_review import research_review_status
+
+    return ResearchRead.model_validate(run).model_copy(
+        update={
+            "review_status": research_review_status(run, review),
+            "review": ResearchReviewRead.model_validate(review) if review is not None else None,
+        }
+    )
 
 
 class ResearchPage(BaseModel):

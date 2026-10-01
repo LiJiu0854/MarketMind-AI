@@ -14,9 +14,16 @@ from app.api.dependencies import get_current_user, get_db_session, require_roles
 from app.celery_app import celery_app
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.models.research import ResearchRun
+from app.models.research_review import ResearchReportReview
 from app.models.user import Role, User
-from app.schemas.research import ResearchCreate, ResearchCreated, ResearchPage, ResearchRead
+from app.schemas.research import (
+    ResearchCreate,
+    ResearchCreated,
+    ResearchPage,
+    ResearchRead,
+    build_research_read,
+)
+from app.schemas.research_review import ResearchReviewCreate, ResearchReviewRead
 from app.services.research import (
     create_research_run,
     get_research_run,
@@ -24,8 +31,14 @@ from app.services.research import (
     mark_research_failure,
     set_research_task_id,
 )
+from app.services.research_review import (
+    get_research_review,
+    list_research_reviews,
+    review_research_report,
+)
 
 ResearchManager = Annotated[User, Depends(require_roles(Role.ADMIN, Role.OPERATOR))]
+ResearchAdmin = Annotated[User, Depends(require_roles(Role.ADMIN))]
 
 router = APIRouter(
     prefix="/products",
@@ -65,8 +78,9 @@ async def read_research_runs(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ResearchPage:
     items, total = await list_research_runs(session, product_id, page, page_size)
+    reviews = await list_research_reviews(session, [item.id for item in items])
     return ResearchPage(
-        items=[ResearchRead.model_validate(item) for item in items],
+        items=[build_research_read(item, reviews.get(item.id)) for item in items],
         total=total,
         page=page,
         page_size=page_size,
@@ -78,5 +92,18 @@ async def read_research_run(
     product_id: int,
     run_id: int,
     session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> ResearchRun:
-    return await get_research_run(session, product_id, run_id)
+) -> ResearchRead:
+    run = await get_research_run(session, product_id, run_id)
+    review = await get_research_review(session, run.id)
+    return build_research_read(run, review)
+
+
+@router.post("/{product_id}/research-runs/{run_id}/review", response_model=ResearchReviewRead)
+async def review_product_research(
+    product_id: int,
+    run_id: int,
+    payload: ResearchReviewCreate,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    actor: ResearchAdmin,
+) -> ResearchReportReview:
+    return await review_research_report(session, product_id, run_id, actor.id, payload)
