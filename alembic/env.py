@@ -13,6 +13,7 @@ from app.models import (  # noqa: F401
     KnowledgeDocument,
     KnowledgeQuery,
     Product,
+    ResearchReportReview,
     ResearchRun,
     SemanticReview,
     User,

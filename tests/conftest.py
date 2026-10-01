@@ -13,6 +13,7 @@ from app.db.session import create_engine
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeQuery
 from app.models.product import Product
 from app.models.research import ResearchRun
+from app.models.research_review import ResearchReportReview
 from app.models.semantic_review import SemanticReview
 from app.models.user import User
 
@@ -36,6 +37,7 @@ async def session(test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """在外层事务中提供可提交的隔离 Session。"""
     async with test_engine.connect() as connection:
         transaction = await connection.begin()
+        await connection.execute(delete(ResearchReportReview))
         await connection.execute(delete(ResearchRun))
         await connection.execute(delete(KnowledgeQuery))
         await connection.execute(delete(KnowledgeDocument))
