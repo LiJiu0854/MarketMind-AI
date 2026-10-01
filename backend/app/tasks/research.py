@@ -37,7 +37,7 @@ async def run_research_attempt(run_id: int) -> dict[str, int | str]:
                 settings.redis_lock_ttl_ms,
                 (
                     settings.research_max_actions
-                    * (settings.llm_timeout_seconds + settings.embedding_timeout_seconds + 30)
+                    * (settings.llm_timeout_seconds + settings.embedding_timeout_seconds + 45)
                     + settings.llm_timeout_seconds
                     + 60
                 )
@@ -102,6 +102,7 @@ def run_research_task(task: Task, run_id: int) -> dict[str, int | str]:
     except AppError as error:
         retries = int(task.request.retries)
         retryable = error.code in {
+            "LOCK_UNAVAILABLE",
             "RESEARCH_EMBEDDING_UNAVAILABLE",
             "RESEARCH_SEARCH_UNAVAILABLE",
         }

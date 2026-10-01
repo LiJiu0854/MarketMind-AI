@@ -35,10 +35,11 @@ from app.services.research import (
 from app.services.research_agent import (
     ActionCompletion,
     ReportCompletion,
+    ResearchCallError,
     complete_research_report,
     run_research_actions,
 )
-from app.services.research_tools import search_knowledge
+from app.services.research_tools import ResearchToolError, search_knowledge
 from app.services.users import create_user
 
 
@@ -258,6 +259,12 @@ async def test_search_rechecks_mysql_document_and_filename(
     await session.commit()
     ready_id = ready.id
     unready_id = unready.id
+    _, _, cross_base_id = await setup_rows(session, "tool-cross")
+    cross_document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == cross_base_id)
+    )
+    assert cross_document is not None
+    cross_id = cross_document.id
     monkeypatch.setattr(
         "app.services.research_tools.request_embeddings",
         AsyncMock(return_value=EmbeddingCompletion([[0.1, 0.2, 0.3]], 5, 3)),
@@ -278,7 +285,7 @@ async def test_search_rechecks_mysql_document_and_filename(
             text="verified",
             distance=0.1,
         )
-        for document_id in (ready_id, unready_id)
+        for document_id in (ready_id, unready_id, cross_id)
     ]
     monkeypatch.setattr(
         "app.services.research_tools.retrieve_chunks",
@@ -592,8 +599,302 @@ async def test_oversized_product_snapshot_is_rejected_before_model_cost(
     await session.commit()
     with pytest.raises(AppError) as failure:
         await create_research_run(
-            session, product_id, actor_id,
+            session,
+            product_id,
+            actor_id,
             ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
             settings(),
         )
     assert failure.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_fetches_beyond_three_raw_hits_before_filtering(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "oversample")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base_id)
+    )
+    assert document is not None
+    document_id = document.id
+    monkeypatch.setattr(
+        "app.services.research_tools.request_embeddings",
+        AsyncMock(return_value=EmbeddingCompletion([[0.1, 0.2, 0.3]], 5, 3)),
+    )
+    monkeypatch.setattr(
+        "app.services.research_tools.create_chroma_client",
+        AsyncMock(return_value=object()),
+    )
+    monkeypatch.setattr("app.services.research_tools.close_chroma_client", AsyncMock())
+
+    async def filtered_results(
+        _session: object,
+        _client: object,
+        _base: object,
+        _vector: object,
+        top_k: int,
+        _distance: float,
+    ) -> list[RetrievedChunk]:
+        # Simulate three stale raw Chroma hits ahead of the first valid one.
+        if top_k <= 3:
+            return []
+        return [
+            RetrievedChunk(
+                document_id=document_id,
+                original_name="forged.txt",
+                chunk_id=f"document:{document_id}:chunk:0",
+                chunk_index=0,
+                text="valid fourth hit",
+                distance=0.1,
+            )
+        ]
+
+    monkeypatch.setattr("app.services.research_tools.retrieve_chunks", filtered_results)
+    result = await search_knowledge(session, run, base_id, "price", settings())
+    assert [item.text for item in result.evidence] == ["valid fourth hit"]
+
+
+@pytest.mark.asyncio
+async def test_action_usage_survives_tool_failure_without_fake_step(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "tool-cost")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    monkeypatch.setattr(
+        "app.services.research_agent.request_research_action",
+        AsyncMock(
+            return_value=ActionCompletion(
+                ResearchAction(action="search_knowledge", knowledge_base_id=base_id, query="price"),
+                7,
+                2,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.research_agent.search_knowledge",
+        AsyncMock(side_effect=AppError("RESEARCH_SEARCH_UNAVAILABLE", "检索失败", 503)),
+    )
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    with pytest.raises(AppError):
+        await run_research_actions(run.id, sessions, settings())
+    await session.refresh(run)
+    assert run.steps == []
+    assert run.prompt_tokens == 7
+    assert run.completion_tokens == 2
+    assert run.total_tokens == 9
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_action_usage_is_saved(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "bad-action-cost")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    error = ResearchCallError(
+        "RESEARCH_INVALID_RESPONSE",
+        "模型动作格式无效",
+        retryable=False,
+        usage=ResearchUsage(11, 4, 0),
+    )
+    monkeypatch.setattr(
+        "app.services.research_agent.request_research_action",
+        AsyncMock(side_effect=error),
+    )
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    with pytest.raises(ResearchCallError):
+        await run_research_actions(run.id, sessions, settings())
+    await session.refresh(run)
+    assert run.steps == []
+    assert run.prompt_tokens == 11
+    assert run.completion_tokens == 4
+    assert run.total_tokens == 15
+
+
+@pytest.mark.asyncio
+async def test_invalid_report_usage_is_saved_before_safe_failure(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "bad-report-cost")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base_id)
+    )
+    assert document is not None
+    sources = [
+        ResearchEvidence(
+            source_id=f"product:{product_id}:snapshot",
+            source_type="product",
+            product_id=product_id,
+            text="snapshot",
+        ),
+        ResearchEvidence(
+            source_id=f"kb:{base_id}:document:{document.id}:chunk:0",
+            source_type="knowledge",
+            knowledge_base_id=base_id,
+            document_id=document.id,
+            chunk_id=f"document:{document.id}:chunk:0",
+            chunk_index=0,
+            original_name="source.txt",
+            text="verified",
+            distance=0.1,
+        ),
+    ]
+    await append_research_step(
+        session,
+        run.id,
+        {"number": 1, "action": {"action": "finish"}, "source_ids": []},
+        sources,
+        ResearchUsage(0, 0, 0),
+    )
+    error = ResearchCallError(
+        "RESEARCH_INVALID_RESPONSE",
+        "模型报告引用无效",
+        retryable=False,
+        usage=ResearchUsage(9, 4, 0),
+    )
+    monkeypatch.setattr(
+        "app.services.research_agent.request_research_report",
+        AsyncMock(side_effect=error),
+    )
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    with pytest.raises(ResearchCallError):
+        await complete_research_report(run.id, sessions, settings())
+    await session.refresh(run)
+    assert run.report is None
+    assert run.total_tokens == 13
+
+
+@pytest.mark.asyncio
+async def test_embedding_usage_survives_chroma_failure(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    actor_id, product_id, base_id = await setup_rows(session, "embedding-cost")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    monkeypatch.setattr(
+        "app.services.research_agent.request_research_action",
+        AsyncMock(
+            return_value=ActionCompletion(
+                ResearchAction(action="search_knowledge", knowledge_base_id=base_id, query="price"),
+                7,
+                2,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.research_tools.request_embeddings",
+        AsyncMock(return_value=EmbeddingCompletion([[0.1, 0.2, 0.3]], 5, 3)),
+    )
+    monkeypatch.setattr(
+        "app.services.research_tools.create_chroma_client",
+        AsyncMock(side_effect=RuntimeError("private Chroma detail")),
+    )
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    with pytest.raises(ResearchToolError) as failure:
+        await run_research_actions(run.id, sessions, settings())
+    assert "private Chroma detail" not in failure.value.message
+    await session.refresh(run)
+    assert run.steps == []
+    assert run.prompt_tokens == 7
+    assert run.completion_tokens == 2
+    assert run.embedding_tokens == 5
+    assert run.total_tokens == 14
+
+
+@pytest.mark.asyncio
+async def test_embedding_timeout_keeps_usage_unknown(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.document_ingestion import DocumentIngestionError
+
+    actor_id, product_id, base_id = await setup_rows(session, "embedding-timeout")
+    run = await create_research_run(
+        session,
+        product_id,
+        actor_id,
+        ResearchCreate(goal="Compare", knowledge_base_ids=[base_id]),
+        settings(),
+    )
+    await mark_research_running(session, run.id)
+    monkeypatch.setattr(
+        "app.services.research_agent.request_research_action",
+        AsyncMock(
+            return_value=ActionCompletion(
+                ResearchAction(action="search_knowledge", knowledge_base_id=base_id, query="price"),
+                7,
+                2,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.research_tools.request_embeddings",
+        AsyncMock(
+            side_effect=DocumentIngestionError(
+                "DOCUMENT_EMBEDDING_UNAVAILABLE", "timeout", retryable=True
+            )
+        ),
+    )
+    sessions = async_sessionmaker(
+        await session.connection(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    with pytest.raises(ResearchToolError):
+        await run_research_actions(run.id, sessions, settings())
+    await session.refresh(run)
+    assert run.steps == []
+    assert run.prompt_tokens == 7
+    assert run.completion_tokens == 2
+    assert run.embedding_tokens is None
+    assert run.total_tokens is None

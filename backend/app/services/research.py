@@ -102,9 +102,7 @@ async def create_research_run(
                 raise AppError("RESEARCH_KNOWLEDGE_NOT_READY", "知识库没有已就绪文档", 409)
         snapshot = build_product_snapshot(product).model_dump(mode="json")
         if len(json.dumps(snapshot, ensure_ascii=False)) > MAX_RESEARCH_INPUT_CHARS:
-            raise AppError(
-                "RESEARCH_INPUT_TOO_LARGE", "商品内容过长，无法发起研究", 422
-            )
+            raise AppError("RESEARCH_INPUT_TOO_LARGE", "商品内容过长，无法发起研究", 422)
         run = ResearchRun(
             product_id=product_id,
             requested_by_id=actor_id,
@@ -242,6 +240,27 @@ async def append_research_step(
             return None
         run.steps = [*run.steps, step]
         run.evidence = [item.model_dump(mode="json") for item in evidence]
+        _accumulate_usage(run, usage)
+        await session.commit()
+        await session.refresh(run)
+        return run
+    except Exception:
+        await session.rollback()
+        raise
+
+
+async def record_research_usage(
+    session: AsyncSession,
+    run_id: int,
+    usage: ResearchUsage,
+) -> ResearchRun | None:
+    """付费调用一返回就独立保存用量，不等待工具或报告校验。"""
+    try:
+        run = await session.scalar(
+            select(ResearchRun).where(ResearchRun.id == run_id).with_for_update()
+        )
+        if run is None or run.status is not ResearchStatus.RUNNING:
+            return None
         _accumulate_usage(run, usage)
         await session.commit()
         await session.refresh(run)

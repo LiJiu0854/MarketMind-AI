@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
+from openai import APITimeoutError
 from pydantic import SecretStr, ValidationError
 
 from app.core.config import Settings
@@ -116,9 +118,7 @@ def test_report_schema_limits_and_extra_fields() -> None:
             {
                 "outcome": "supported",
                 "summary": "s",
-                "findings": [
-                    {"claim": "Finding", "source_ids": ["kb:12:document:1:chunk:0"]}
-                ],
+                "findings": [{"claim": "Finding", "source_ids": ["kb:12:document:1:chunk:0"]}],
                 "recommendations": [],
                 "evidence_gaps": ["x" * 501],
             }
@@ -163,4 +163,75 @@ async def test_report_model_uses_json_mode_and_closes_client(
     assert create.call_args.kwargs["response_format"] == {"type": "json_object"}
     assert factory.call_args.kwargs["max_retries"] == 0
     assert "不可信" in create.call_args.kwargs["messages"][0]["content"]
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_forged_report_carries_known_usage_for_failure_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    content = json.dumps(supported(["kb:99:document:1:chunk:0"]).model_dump())
+    create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            usage=SimpleNamespace(prompt_tokens=9, completion_tokens=4),
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.research_agent.AsyncOpenAI",
+        Mock(
+            return_value=SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                close=AsyncMock(),
+            )
+        ),
+    )
+    run = cast(
+        ResearchRun,
+        SimpleNamespace(
+            goal="Compare",
+            product_snapshot={"title": "Product"},
+            evidence=[item.model_dump(mode="json") for item in registered()],
+            steps=[],
+        ),
+    )
+    with pytest.raises(ResearchCallError) as failure:
+        await request_research_report(
+            run, Settings(llm_model="model", llm_api_key=SecretStr("private"))
+        )
+    assert failure.value.usage is not None
+    assert failure.value.usage.prompt_tokens == 9
+    assert failure.value.usage.completion_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_report_timeout_marks_usage_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = httpx.Request("POST", "https://provider.invalid/v1/chat/completions")
+    create = AsyncMock(side_effect=APITimeoutError(request))
+    close = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.research_agent.AsyncOpenAI",
+        Mock(
+            return_value=SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                close=close,
+            )
+        ),
+    )
+    run = cast(
+        ResearchRun,
+        SimpleNamespace(
+            goal="Compare", product_snapshot={"title": "Product"}, evidence=[], steps=[]
+        ),
+    )
+    with pytest.raises(ResearchCallError) as failure:
+        await request_research_report(
+            run, Settings(llm_model="test", llm_api_key=SecretStr("private"))
+        )
+    assert failure.value.retryable
+    assert failure.value.usage is not None
+    assert failure.value.usage.prompt_tokens is None
+    assert failure.value.usage.completion_tokens is None
     close.assert_awaited_once()

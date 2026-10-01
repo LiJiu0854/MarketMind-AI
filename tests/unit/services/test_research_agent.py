@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
+from openai import APITimeoutError
 from pydantic import SecretStr, ValidationError
 
 from app.core.config import Settings
@@ -139,4 +141,29 @@ async def test_invalid_model_action_never_dispatches(
         )
     assert failure.value.code == "RESEARCH_INVALID_RESPONSE"
     assert "private" not in failure.value.message
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_action_timeout_marks_usage_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = httpx.Request("POST", "https://provider.invalid/v1/chat/completions")
+    create = AsyncMock(side_effect=APITimeoutError(request))
+    close = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.research_agent.AsyncOpenAI",
+        Mock(
+            return_value=SimpleNamespace(
+                chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+                close=close,
+            )
+        ),
+    )
+    with pytest.raises(ResearchCallError) as failure:
+        await request_research_action(
+            make_run(), Settings(llm_model="test", llm_api_key=SecretStr("private"))
+        )
+    assert failure.value.retryable
+    assert failure.value.usage is not None
+    assert failure.value.usage.prompt_tokens is None
+    assert failure.value.usage.completion_tokens is None
     close.assert_awaited_once()

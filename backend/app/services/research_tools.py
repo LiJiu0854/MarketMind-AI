@@ -1,5 +1,6 @@
 """两个受控只读研究工具及来源登记。"""
 
+import asyncio
 import json
 from collections.abc import Sequence
 
@@ -15,6 +16,18 @@ from app.schemas.research import ResearchEvidence, ToolResult
 from app.schemas.semantic_review import ProductSnapshot
 from app.services.document_ingestion import DocumentIngestionError, request_embeddings
 from app.services.rag import RAGCallError, retrieve_chunks
+
+RESEARCH_CANDIDATE_COUNT = 30
+
+
+class ResearchToolError(AppError):
+    """工具后半程失败时保留已知 Embedding 用量，不暴露原始异常。"""
+
+    def __init__(
+        self, code: str, message: str, status_code: int, embedding_tokens: int | None
+    ) -> None:
+        super().__init__(code, message, status_code)
+        self.embedding_tokens = embedding_tokens
 
 
 def read_product_snapshot(run: ResearchRun) -> ToolResult:
@@ -91,24 +104,41 @@ async def search_knowledge(
     try:
         embedding = await request_embeddings([query], settings)
     except DocumentIngestionError as error:
-        raise AppError(
+        raise ResearchToolError(
             "RESEARCH_EMBEDDING_UNAVAILABLE"
             if error.retryable
             else "RESEARCH_EMBEDDING_CONFIG_ERROR",
-            "Embedding 服务暂时不可用"
-            if error.retryable
-            else "Embedding 配置或响应无效",
+            "Embedding 服务暂时不可用" if error.retryable else "Embedding 配置或响应无效",
             503,
+            None,
         ) from None
     if base.embedding_dimensions is not None and base.embedding_dimensions != embedding.dimensions:
-        raise AppError("RESEARCH_EMBEDDING_CONFIG_MISMATCH", "Embedding 维度不一致", 503)
+        raise ResearchToolError(
+            "RESEARCH_EMBEDDING_CONFIG_MISMATCH",
+            "Embedding 维度不一致",
+            503,
+            embedding.total_tokens,
+        )
     try:
-        chroma = await create_chroma_client(settings)
+        chroma = await asyncio.wait_for(create_chroma_client(settings), timeout=10)
     except Exception:
-        raise AppError("RESEARCH_SEARCH_UNAVAILABLE", "向量检索服务不可用", 503) from None
+        raise ResearchToolError(
+            "RESEARCH_SEARCH_UNAVAILABLE",
+            "向量检索服务不可用",
+            503,
+            embedding.total_tokens,
+        ) from None
     try:
-        chunks = await retrieve_chunks(
-            session, chroma, base, embedding.vectors[0], 3, settings.rag_max_distance
+        chunks = await asyncio.wait_for(
+            retrieve_chunks(
+                session,
+                chroma,
+                base,
+                embedding.vectors[0],
+                RESEARCH_CANDIDATE_COUNT,
+                settings.rag_max_distance,
+            ),
+            timeout=20,
         )
         if not chunks:
             return ToolResult(evidence=[], embedding_tokens=embedding.total_tokens)
@@ -137,18 +167,32 @@ async def search_knowledge(
             )
             for chunk in chunks
             if chunk.document_id in verified
-        ]
+        ][:3]
         return ToolResult(evidence=evidence, embedding_tokens=embedding.total_tokens)
+    except TimeoutError:
+        raise ResearchToolError(
+            "RESEARCH_SEARCH_UNAVAILABLE",
+            "向量检索服务不可用",
+            503,
+            embedding.total_tokens,
+        ) from None
     except RAGCallError as error:
-        raise AppError(
+        raise ResearchToolError(
             "RESEARCH_SEARCH_INVALID_RESPONSE"
             if error.code == "RAG_INVALID_RESPONSE"
             else "RESEARCH_SEARCH_UNAVAILABLE",
-            "向量检索结果无效"
-            if error.code == "RAG_INVALID_RESPONSE"
-            else "向量检索服务不可用",
+            "向量检索结果无效" if error.code == "RAG_INVALID_RESPONSE" else "向量检索服务不可用",
             error.status_code,
+            embedding.total_tokens,
         ) from None
     finally:
         await session.rollback()
-        await close_chroma_client(chroma)
+        try:
+            await asyncio.wait_for(close_chroma_client(chroma), timeout=5)
+        except Exception:
+            raise ResearchToolError(
+                "RESEARCH_SEARCH_UNAVAILABLE",
+                "向量检索服务不可用",
+                503,
+                embedding.total_tokens,
+            ) from None

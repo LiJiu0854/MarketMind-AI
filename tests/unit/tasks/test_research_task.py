@@ -117,9 +117,7 @@ def test_permanent_error_fails_without_retry(
 def test_configuration_drift_is_not_retried_and_keeps_stable_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    error = AppError(
-        "RESEARCH_EMBEDDING_CONFIG_MISMATCH", "Embedding 配置不一致", 503
-    )
+    error = AppError("RESEARCH_EMBEDDING_CONFIG_MISMATCH", "Embedding 配置不一致", 503)
     monkeypatch.setattr(research_task, "run_research_attempt", AsyncMock(side_effect=error))
     persist = AsyncMock()
     monkeypatch.setattr(research_task, "persist_research_failure", persist)
@@ -129,6 +127,21 @@ def test_configuration_drift_is_not_retried_and_keeps_stable_code(
     assert result["status"] == "failure"
     task.retry.assert_not_called()
     persist.assert_awaited_once_with(7, error.code, error.message)
+
+
+def test_transient_redis_lock_failure_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = AppError("LOCK_UNAVAILABLE", "锁服务暂时不可用", 503)
+    monkeypatch.setattr(research_task, "run_research_attempt", AsyncMock(side_effect=error))
+    persist = AsyncMock()
+    monkeypatch.setattr(research_task, "persist_research_failure", persist)
+    task = Mock()
+    task.request.retries = 0
+    task.retry.return_value = Retry()
+    with pytest.raises(Retry):
+        research_task.run_research_task(task, 7)
+    persist.assert_not_awaited()
 
 
 def test_celery_registration_is_late_ack() -> None:

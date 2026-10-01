@@ -15,7 +15,7 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,8 +31,10 @@ from app.services.research import (
     ResearchUsage,
     append_research_step,
     mark_research_success,
+    record_research_usage,
 )
 from app.services.research_tools import (
+    ResearchToolError,
     read_product_snapshot,
     register_evidence,
     search_knowledge,
@@ -51,10 +53,18 @@ outcome 必须为 supported；至少一条发现。每项发现和建议都要�
 
 
 class ResearchCallError(Exception):
-    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+        usage: ResearchUsage | None = None,
+    ) -> None:
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.usage = usage
         super().__init__(message)
 
 
@@ -70,6 +80,17 @@ class ReportCompletion:
     report: dict[str, object]
     prompt_tokens: int | None
     completion_tokens: int | None
+
+
+def _response_usage(response: ChatCompletion | None) -> ResearchUsage | None:
+    if response is None:
+        return None
+    usage = response.usage
+    return ResearchUsage(
+        usage.prompt_tokens if usage else None,
+        usage.completion_tokens if usage else None,
+        0,
+    )
 
 
 def build_insufficient_report(
@@ -157,6 +178,7 @@ async def request_research_report(run: ResearchRun, settings: Settings) -> Repor
         raise ResearchCallError(
             "RESEARCH_CONFIG_ERROR", "研究模型配置无效", retryable=False
         ) from None
+    response: ChatCompletion | None = None
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
@@ -173,17 +195,23 @@ async def request_research_report(run: ResearchRun, settings: Settings) -> Repor
         report = ResearchReport.model_validate(json.loads(content), strict=True)
         registered = [ResearchEvidence.model_validate(item) for item in run.evidence]
         verified = validate_report_sources(report, registered)
+    except ResearchCallError as error:
+        error.usage = _response_usage(response)
+        raise
     except (AuthenticationError, PermissionDeniedError):
         raise ResearchCallError(
-            "RESEARCH_PROVIDER_AUTH_ERROR", "模型服务认证失败", retryable=False
+            "RESEARCH_PROVIDER_AUTH_ERROR", "模型服务认证失败", retryable=False,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except (BadRequestError, NotFoundError):
         raise ResearchCallError(
-            "RESEARCH_PROVIDER_REQUEST_ERROR", "模型请求配置无效", retryable=False
+            "RESEARCH_PROVIDER_REQUEST_ERROR", "模型请求配置无效", retryable=False,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except (APIConnectionError, APITimeoutError, RateLimitError):
         raise ResearchCallError(
-            "RESEARCH_PROVIDER_UNAVAILABLE", "模型服务暂时不可用", retryable=True
+            "RESEARCH_PROVIDER_UNAVAILABLE", "模型服务暂时不可用", retryable=True,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except APIStatusError as error:
         retryable = error.status_code >= 500
@@ -191,10 +219,14 @@ async def request_research_report(run: ResearchRun, settings: Settings) -> Repor
             "RESEARCH_PROVIDER_UNAVAILABLE" if retryable else "RESEARCH_PROVIDER_REQUEST_ERROR",
             "模型服务暂时不可用" if retryable else "模型请求配置无效",
             retryable=retryable,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except (IndexError, AttributeError, TypeError, ValueError, ValidationError):
         raise ResearchCallError(
-            "RESEARCH_INVALID_RESPONSE", "模型报告格式无效", retryable=False
+            "RESEARCH_INVALID_RESPONSE",
+            "模型报告格式无效",
+            retryable=False,
+            usage=_response_usage(response),
         ) from None
     finally:
         await client.close()
@@ -235,6 +267,7 @@ async def request_research_action(run: ResearchRun, settings: Settings) -> Actio
         raise ResearchCallError(
             "RESEARCH_CONFIG_ERROR", "研究模型配置无效", retryable=False
         ) from None
+    response: ChatCompletion | None = None
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
@@ -253,15 +286,18 @@ async def request_research_action(run: ResearchRun, settings: Settings) -> Actio
             raise ValueError("unselected knowledge base")
     except (AuthenticationError, PermissionDeniedError):
         raise ResearchCallError(
-            "RESEARCH_PROVIDER_AUTH_ERROR", "模型服务认证失败", retryable=False
+            "RESEARCH_PROVIDER_AUTH_ERROR", "模型服务认证失败", retryable=False,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except (BadRequestError, NotFoundError):
         raise ResearchCallError(
-            "RESEARCH_PROVIDER_REQUEST_ERROR", "模型请求配置无效", retryable=False
+            "RESEARCH_PROVIDER_REQUEST_ERROR", "模型请求配置无效", retryable=False,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except (APIConnectionError, APITimeoutError, RateLimitError):
         raise ResearchCallError(
-            "RESEARCH_PROVIDER_UNAVAILABLE", "模型服务暂时不可用", retryable=True
+            "RESEARCH_PROVIDER_UNAVAILABLE", "模型服务暂时不可用", retryable=True,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except APIStatusError as error:
         retryable = error.status_code >= 500
@@ -269,10 +305,14 @@ async def request_research_action(run: ResearchRun, settings: Settings) -> Actio
             "RESEARCH_PROVIDER_UNAVAILABLE" if retryable else "RESEARCH_PROVIDER_REQUEST_ERROR",
             "模型服务暂时不可用" if retryable else "模型请求配置无效",
             retryable=retryable,
+            usage=ResearchUsage(None, None, 0),
         ) from None
     except (IndexError, AttributeError, TypeError, ValueError, ValidationError):
         raise ResearchCallError(
-            "RESEARCH_INVALID_RESPONSE", "模型动作格式无效", retryable=False
+            "RESEARCH_INVALID_RESPONSE",
+            "模型动作格式无效",
+            retryable=False,
+            usage=_response_usage(response),
         ) from None
     finally:
         await client.close()
@@ -304,7 +344,21 @@ async def run_research_actions(
             or (isinstance(last_action, dict) and last_action.get("action") == "finish")
         ):
             return run
-        completion = await request_research_action(run, settings)
+        try:
+            completion = await request_research_action(run, settings)
+        except ResearchCallError as error:
+            if error.usage is not None:
+                async with sessions() as session:
+                    await record_research_usage(session, run_id, error.usage)
+            raise
+        async with sessions() as session:
+            charged = await record_research_usage(
+                session,
+                run_id,
+                ResearchUsage(completion.prompt_tokens, completion.completion_tokens, 0),
+            )
+        if charged is None:
+            return None
         action = completion.action
         if action.action == "read_product":
             tool = read_product_snapshot(run)
@@ -313,10 +367,23 @@ async def run_research_actions(
                 raise ResearchCallError(
                     "RESEARCH_INVALID_RESPONSE", "模型动作格式无效", retryable=False
                 )
+            try:
+                async with sessions() as session:
+                    tool = await search_knowledge(
+                        session, run, action.knowledge_base_id, action.query, settings
+                    )
+            except ResearchToolError as error:
+                async with sessions() as session:
+                    await record_research_usage(
+                        session, run_id, ResearchUsage(0, 0, error.embedding_tokens)
+                    )
+                raise
             async with sessions() as session:
-                tool = await search_knowledge(
-                    session, run, action.knowledge_base_id, action.query, settings
+                charged = await record_research_usage(
+                    session, run_id, ResearchUsage(0, 0, tool.embedding_tokens)
                 )
+            if charged is None:
+                return None
         elif action.action == "finish":
             tool = ToolResult(evidence=[], embedding_tokens=0)
         else:
@@ -341,9 +408,9 @@ async def run_research_actions(
                 step,
                 registered,
                 ResearchUsage(
-                    prompt_tokens=completion.prompt_tokens,
-                    completion_tokens=completion.completion_tokens,
-                    embedding_tokens=tool.embedding_tokens,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    embedding_tokens=0,
                 ),
             )
         if saved is None:
@@ -371,8 +438,22 @@ async def complete_research_report(
         report = build_insufficient_report(evidence)
         usage = ResearchUsage(0, 0, 0)
     else:
-        completion = await request_research_report(run, settings)
+        try:
+            completion = await request_research_report(run, settings)
+        except ResearchCallError as error:
+            if error.usage is not None:
+                async with sessions() as session:
+                    await record_research_usage(session, run_id, error.usage)
+            raise
+        async with sessions() as session:
+            charged = await record_research_usage(
+                session,
+                run_id,
+                ResearchUsage(completion.prompt_tokens, completion.completion_tokens, 0),
+            )
+        if charged is None:
+            return None
         report = completion.report
-        usage = ResearchUsage(completion.prompt_tokens, completion.completion_tokens, 0)
+        usage = ResearchUsage(0, 0, 0)
     async with sessions() as session:
         return await mark_research_success(session, run_id, report, usage)
