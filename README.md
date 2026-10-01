@@ -2,10 +2,10 @@
 
 MarketMind AI 是面向电商运营团队的 AI 商品运营与竞品研究平台。
 
-当前已完成阶段 6 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
+当前已完成阶段 7 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
 同步导入、确定性 Listing 检查和筛选导出，以及异步 LLM Listing 语义审核与
 MySQL 历史持久化；另有 PDF/MD/TXT 知识库、异步向量索引、带来源引用的 RAG 问答，
-以及基于已上传资料的受控竞品研究。
+以及基于已上传资料的受控竞品研究、人工审核与 Excel 交付。
 
 ## 环境要求
 
@@ -51,6 +51,8 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 - `POST /products/{product_id}/research-runs`：Admin、Operator 发起受控研究，返回 `202` 与 `run_id/task_id/status`；
 - `GET /products/{product_id}/research-runs`：三种角色分页查看 MySQL 研究历史；
 - `GET /products/{product_id}/research-runs/{run_id}`：三种角色读取状态、步骤、证据、报告与 Token 用量。
+- `POST /products/{product_id}/research-runs/{run_id}/review`：仅 Admin 一次性批准或驳回有证据支持的报告；
+- `GET /products/{product_id}/research-runs/{run_id}/export`：三种角色下载已批准报告的 `.xlsx`。
 
 导入和导出只使用请求内存，不保存工作簿文件。导入允许合法行成功、错误行返回稳定错误；并发 SKU 冲突会整体回滚。
 
@@ -95,6 +97,33 @@ Chat，因此应按模型计费规则评估上限。切换模型仍配置 `LLM_*
 保持 OpenAI-compatible API 与 JSON Mode 支持；研究不会实时联网抓取竞品，
 结论只反映管理员已上传且通过核验的资料，不能当作未经复核的市场事实。
 自动化测试中的模型与 Chroma 均为模拟；尚未进行产生真实费用的人工验收。
+
+## 研究报告审核与交付（单元 7）
+
+先应用 `0006` 迁移（上面的 `alembic ... upgrade head` 会升级到当前版本）。研究运行须为
+`success`，结构化报告须为 `supported`；`insufficient_evidence`、失败中或损坏的报告
+不能审批。Admin 对研究提交一次审核，例如：
+
+```http
+POST /api/v1/products/1/research-runs/7/review
+Authorization: Bearer <管理员令牌>
+Content-Type: application/json
+
+{"decision":"approved","comment":"来源已核对"}
+```
+
+`decision` 只接受 `approved/rejected`；驳回必须填写非空意见，意见最多 500 字符。
+审核不修改原报告、步骤和证据，同一研究只保存一条不可变最终决定。相同 Admin、决定和
+去首尾空格后相同意见的重试返回原审核记录（`200`、同一 ID）；其他再次提交、
+不可审核或未批准导出返回 `409`。匿名 `401`、非 Admin 审核 `403`，研究不属于路径商品
+返回 `404`。三种角色在研究列表/详情可见 `review_status` 和审核记录。
+
+批准后，任一已认证角色调用 `GET /api/v1/products/1/research-runs/7/export` 下载
+`research-7.xlsx`。文件仅在请求内存中生成，固定含“概览”“发现与建议”“证据”三张表；
+来源 ID、已登记文件名、页码和片段可用于追溯。外部文本会被当作纯文本处理，不能成为
+Excel 公式或超链接。工作簿注明结论仍需业务复核。此阶段没有外部系统推送、下载日志、
+前端界面或真实模型调用，审核和导出本身不产生模型费用；人工转交文件仍需组织自己的
+数据权限与保密流程。
 
 ## RAG 知识库（单元 5）
 

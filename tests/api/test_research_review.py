@@ -1,10 +1,13 @@
 """Review API permissions, product scope and history display."""
 
 from collections.abc import AsyncIterator
+from copy import deepcopy
+from io import BytesIO
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from openpyxl import load_workbook  # type: ignore[import-untyped]
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -136,6 +139,8 @@ async def test_only_approved_report_is_downloadable(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     _, product_id, run_id = await prepared_run(session, "export-approved")
+    original = await session.get_one(ResearchRun, run_id)
+    before = deepcopy((original.report, original.steps, original.evidence))
     _, rejected_product, rejected_run = await prepared_run(session, "export-rejected")
     _, insufficient_product, insufficient_run = await prepared_run(session, "export-insufficient")
     insufficient = await session.get_one(ResearchRun, insufficient_run)
@@ -178,6 +183,19 @@ async def test_only_approved_report_is_downloadable(
         )
         assert f"research-{run_id}.xlsx" in response.headers["content-disposition"]
         assert response.content[:2] == b"PK"
+        workbook = load_workbook(BytesIO(response.content))
+        values = [cell.value for sheet in workbook for row in sheet for cell in row]
+        assert "可验证发现" in values
+        assert f"product:{product_id}:snapshot" in values
+        detail = await client.get(approved_path, headers=headers(reader))
+        assert detail.status_code == 200
+        assert (
+            detail.json()["report"],
+            detail.json()["steps"],
+            detail.json()["evidence"],
+        ) == before
+    await session.refresh(original)
+    assert (original.report, original.steps, original.evidence) == before
 
 
 @pytest.mark.asyncio
