@@ -9,13 +9,21 @@ from pydantic import ValidationError
 from app.core.errors import AppError
 from app.models.research import ResearchRun
 from app.models.research_review import ResearchReportReview
-from app.schemas.research import ResearchEvidence, ResearchReport
+from app.services.research_review import validate_persisted_research
 
 DISCLAIMER = "结论基于已上传且经程序核验的资料，仍需业务复核"
 
 
 def _safe_excel_text(value: str) -> str:
     """Dangerous prefixes stay text even after leading spaces."""
+    value = "".join(
+        char
+        for char in value
+        if char in "\t\n\r"
+        or 0x20 <= ord(char) <= 0xD7FF
+        or 0xE000 <= ord(char) <= 0xFFFD
+        or 0x10000 <= ord(char) <= 0x10FFFF
+    )
     return f"'{value}" if value.lstrip().startswith(("=", "+", "-", "@")) else value
 
 
@@ -25,19 +33,9 @@ def _safe(value: object) -> object:
 
 def export_research_report(run: ResearchRun, review: ResearchReportReview) -> bytes:
     try:
-        report = ResearchReport.model_validate(run.report, strict=True)
-        evidence = [ResearchEvidence.model_validate(item, strict=True) for item in run.evidence]
-    except ValidationError:
+        report, evidence = validate_persisted_research(run)
+    except (ValidationError, ValueError):
         raise AppError("RESEARCH_EXPORT_INVALID", "研究报告或来源数据无效", 409) from None
-    registered = {item.source_id for item in evidence}
-    cited = {source_id for finding in report.findings for source_id in finding.source_ids}
-    cited.update(
-        source_id
-        for recommendation in report.recommendations
-        for source_id in recommendation.source_ids
-    )
-    if not cited.issubset(registered):
-        raise AppError("RESEARCH_EXPORT_INVALID", "研究报告或来源数据无效", 409)
 
     workbook = Workbook()
     overview = workbook.active

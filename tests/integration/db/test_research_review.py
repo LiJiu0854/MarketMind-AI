@@ -1,6 +1,7 @@
 """Real MySQL checks for the immutable review transaction."""
 
 import asyncio
+from copy import deepcopy
 
 import pytest
 from sqlalchemy import delete, func, select
@@ -12,19 +13,25 @@ from app.models.product import Product
 from app.models.research import ResearchRun, ResearchStatus
 from app.models.research_review import ResearchReportReview, ResearchReviewDecision
 from app.models.user import Role, User
-from app.schemas.research import ResearchCreate
+from app.schemas.research import ResearchCreate, ResearchEvidence, ResearchReport
 from app.schemas.research_review import ResearchReviewCreate
 from app.services.research import create_research_run
+from app.services.research_agent import validate_report_sources
 from app.services.research_review import review_research_report
 from tests.api.test_research import configured_settings
 from tests.integration.db.test_research import setup_rows
 
 
-def supported_report(product_id: int = 1) -> dict[str, object]:
+def supported_report(source_id: str = "kb:2:document:3:chunk:0") -> dict[str, object]:
     return {
         "outcome": "supported",
         "summary": "依据已登记来源",
-        "findings": [{"claim": "可验证发现", "source_ids": [f"product:{product_id}:snapshot"]}],
+        "findings": [
+            {
+                "claim": "可验证发现",
+                "source_ids": [source_id],
+            }
+        ],
         "recommendations": [],
         "evidence_gaps": [],
     }
@@ -39,16 +46,35 @@ async def prepared_run(session: AsyncSession, suffix: str) -> tuple[int, int, in
         ResearchCreate(goal="比较", knowledge_base_ids=[base_id]),
         configured_settings(),
     )
+    document = await session.scalar(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base_id)
+    )
+    assert document is not None
+    source_id = f"kb:{base_id}:document:{document.id}:chunk:0"
     run.status = ResearchStatus.SUCCESS
-    run.report = supported_report(product_id)
     run.evidence = [
         {
             "source_id": f"product:{product_id}:snapshot",
             "source_type": "product",
             "product_id": product_id,
             "text": "商品快照",
-        }
+        },
+        {
+            "source_id": source_id,
+            "source_type": "knowledge",
+            "knowledge_base_id": base_id,
+            "document_id": document.id,
+            "chunk_id": f"document:{document.id}:chunk:0",
+            "chunk_index": 0,
+            "original_name": "source.txt",
+            "text": "已登记来源",
+            "distance": 0.1,
+        },
     ]
+    run.report = validate_report_sources(
+        ResearchReport.model_validate(supported_report(source_id)),
+        [ResearchEvidence.model_validate(item) for item in run.evidence],
+    )
     await session.commit()
     return actor_id, product_id, run.id
 
@@ -89,6 +115,54 @@ async def test_only_supported_report_is_reviewable(session: AsyncSession) -> Non
 
 
 @pytest.mark.asyncio
+async def test_missing_unknown_or_product_only_sources_cannot_be_approved(
+    session: AsyncSession,
+) -> None:
+    actor_id, product_id, run_id = await prepared_run(session, "review-sources")
+    run = await session.get_one(ResearchRun, run_id)
+    real_report = deepcopy(run.report)
+    assert real_report is not None
+    real_evidence = deepcopy(run.evidence)
+    tampered_report = deepcopy(real_report)
+    findings = tampered_report["findings"]
+    assert isinstance(findings, list)
+    finding = findings[0]
+    assert isinstance(finding, dict)
+    citations = finding["citations"]
+    assert isinstance(citations, list)
+    citation = citations[0]
+    assert isinstance(citation, dict)
+    citation["original_name"] = "伪造文件.txt"
+    for report, evidence in (
+        (real_report, []),
+        (real_report, real_evidence[:1]),
+        (supported_report("kb:999:document:999:chunk:0"), real_evidence),
+        (supported_report(f"product:{product_id}:snapshot"), real_evidence),
+        (tampered_report, real_evidence),
+    ):
+        run.report = deepcopy(report)
+        run.evidence = deepcopy(evidence)
+        await session.commit()
+        with pytest.raises(AppError) as failure:
+            await review_research_report(
+                session,
+                product_id,
+                run_id,
+                actor_id,
+                ResearchReviewCreate(decision=ResearchReviewDecision.APPROVED),
+            )
+        assert failure.value.status_code == 409
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(ResearchReportReview)
+            .where(ResearchReportReview.run_id == run_id)
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_same_review_retry_is_idempotent(session: AsyncSession) -> None:
     actor_id, product_id, run_id = await prepared_run(session, "review-idempotence")
     first = await review_research_report(
@@ -125,6 +199,31 @@ async def test_same_review_retry_is_idempotent(session: AsyncSession) -> None:
             .where(ResearchReportReview.run_id == run_id)
         )
         == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_integrity_error_is_not_reported_as_existing_review(
+    session: AsyncSession,
+) -> None:
+    _, product_id, run_id = await prepared_run(session, "review-invalid-actor")
+    with pytest.raises(AppError) as failure:
+        await review_research_report(
+            session,
+            product_id,
+            run_id,
+            999_999_999,
+            ResearchReviewCreate(decision=ResearchReviewDecision.APPROVED),
+        )
+    assert failure.value.code == "RESEARCH_REVIEW_WRITE_FAILED"
+    assert failure.value.status_code == 500
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(ResearchReportReview)
+            .where(ResearchReportReview.run_id == run_id)
+        )
+        == 0
     )
 
 

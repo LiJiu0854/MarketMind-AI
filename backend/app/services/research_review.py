@@ -10,17 +10,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.models.research import ResearchRun, ResearchStatus
 from app.models.research_review import ResearchReportReview, ResearchReviewDecision
-from app.schemas.research import ResearchReport
+from app.schemas.research import ResearchEvidence, ResearchReport
 from app.schemas.research_review import ResearchReviewCreate, ResearchReviewStatus
 from app.services.research import get_research_run
+from app.services.research_agent import ResearchCallError, validate_report_sources
+
+
+def validate_persisted_research(
+    run: ResearchRun,
+) -> tuple[ResearchReport, list[ResearchEvidence]]:
+    """Rebuild Phase 6 citations and compare with the saved verified report."""
+    if not isinstance(run.report, dict) or not isinstance(run.evidence, list):
+        raise ValueError("missing report or evidence")
+    model_report = dict(run.report)
+    for group in ("findings", "recommendations"):
+        rows = model_report.get(group)
+        if not isinstance(rows, list):
+            raise ValueError("invalid report rows")
+        model_report[group] = [
+            {key: value for key, value in row.items() if key != "citations"}
+            if isinstance(row, dict)
+            else row
+            for row in rows
+        ]
+    report = ResearchReport.model_validate(model_report, strict=True)
+    evidence = [ResearchEvidence.model_validate(item, strict=True) for item in run.evidence]
+    if not any(item.source_type == "product" for item in evidence) or not any(
+        item.source_type == "knowledge" for item in evidence
+    ):
+        raise ValueError("missing required evidence")
+    try:
+        canonical = validate_report_sources(report, evidence)
+    except ResearchCallError:
+        raise ValueError("invalid report citations") from None
+    if canonical != run.report:
+        raise ValueError("persisted citations differ from registered evidence")
+    return report, evidence
 
 
 def _is_reviewable(run: ResearchRun) -> bool:
-    if run.status is not ResearchStatus.SUCCESS or run.report is None:
+    if run.status is not ResearchStatus.SUCCESS:
         return False
     try:
-        report = ResearchReport.model_validate(run.report, strict=True)
-    except ValidationError:
+        report, _ = validate_persisted_research(run)
+    except (ValidationError, ValueError):
         return False
     return report.outcome == "supported"
 
@@ -72,9 +105,11 @@ async def review_research_report(
     except IntegrityError:
         await session.rollback()
         existing = await get_research_review(session, run_id)
-        if existing is not None and _same_decision(existing, reviewer_id, payload):
-            return existing
-        raise AppError("RESEARCH_ALREADY_REVIEWED", "研究报告已有最终审核", 409) from None
+        if existing is not None:
+            if _same_decision(existing, reviewer_id, payload):
+                return existing
+            raise AppError("RESEARCH_ALREADY_REVIEWED", "研究报告已有最终审核", 409) from None
+        raise AppError("RESEARCH_REVIEW_WRITE_FAILED", "审核记录保存失败", 500) from None
     except Exception:
         await session.rollback()
         raise

@@ -18,7 +18,7 @@ from app.models.user import Role
 from app.schemas.research import ResearchCreate
 from app.services.research import create_research_run
 from tests.api.test_research import actor, configured_settings, headers
-from tests.integration.db.test_research_review import prepared_run, supported_report
+from tests.integration.db.test_research_review import prepared_run
 
 
 @pytest.fixture(autouse=True)
@@ -131,7 +131,7 @@ async def test_history_reports_review_state(
     detail = await client.get(f"{path}/{run_id}", headers=admin_headers)
     assert detail.json()["review_status"] == "approved"
     assert detail.json()["review"]["id"] == approved.json()["id"]
-    assert detail.json()["report"] == supported_report(product_id)
+    assert detail.json()["report"] == (await session.get_one(ResearchRun, run_id)).report
 
 
 @pytest.mark.asyncio

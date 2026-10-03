@@ -102,7 +102,8 @@ Chat，因此应按模型计费规则评估上限。切换模型仍配置 `LLM_*
 
 先应用 `0006` 迁移（上面的 `alembic ... upgrade head` 会升级到当前版本）。研究运行须为
 `success`，结构化报告须为 `supported`；`insufficient_evidence`、失败中或损坏的报告
-不能审批。Admin 对研究提交一次审核，例如：
+不能审批。已登记商品和知识库证据、发现/建议引用以及程序生成的来源坐标也会在审批前
+重新核对；缺失或不一致时拒绝审批。Admin 对研究提交一次审核，例如：
 
 ```http
 POST /api/v1/products/1/research-runs/7/review
