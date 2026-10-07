@@ -6,6 +6,8 @@ import AppShell from './components/AppShell.vue'
 import UsersPage from './features/users/UsersPage.vue'
 import ProductsPage from './features/products/ProductsPage.vue'
 import ProductPage from './features/products/ProductPage.vue'
+import KnowledgeBasesPage from './features/knowledge/KnowledgeBasesPage.vue'
+import KnowledgeBasePage from './features/knowledge/KnowledgeBasePage.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -17,6 +19,8 @@ export const router = createRouter({
       { path: 'products', component: ProductsPage, meta: { title: '商品运营' } },
       { path: 'products/new', component: ProductPage, props: { id: 'new' }, meta: { title: '新建商品', manager: true } },
       { path: 'products/:id', component: ProductPage, props: true, meta: { title: '商品详情' } },
+      { path: 'knowledge-bases', component: KnowledgeBasesPage, meta: { title: '知识库' } },
+      { path: 'knowledge-bases/:id', component: KnowledgeBasePage, props: true, meta: { title: '知识库详情' } },
     ] },
   ],
 })

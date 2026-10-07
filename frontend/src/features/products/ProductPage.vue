@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { currentUser } from '../../lib/session'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import ProductForm from './ProductForm.vue'
+import SemanticReviewPanel from '../semantic/SemanticReviewPanel.vue'
 import { checkListing, deactivateProduct, getProduct, saveProduct } from './api'
 import type { ListingCheckResult, Product, ProductInput } from './types'
 
@@ -59,6 +60,7 @@ onMounted(() => { void load() })
     <section v-if="editing && canWrite" class="panel"><h2>{{ props.id === 'new' ? '填写商品信息' : '编辑商品信息' }}</h2><ProductForm :initial="product || undefined" :busy="busy" @submit="save" /><button v-if="product" type="button" class="text-button" @click="editing = false">取消编辑</button></section>
     <template v-if="product && !editing"><section class="panel"><div class="panel-heading"><h2>基础信息</h2><span class="status-badge" :class="product.is_active ? 'status-active' : 'status-inactive'">{{ product.is_active ? '启用' : '停用' }}</span></div><dl class="detail-grid"><div v-for="[label, value] in [['SKU', product.sku], ['品牌', product.brand || '—'], ['品类', product.category || '—'], ['价格', `${product.price} ${product.currency}`]]" :key="label" class="kv"><dt>{{ label }}</dt><dd>{{ value }}</dd></div></dl><h3>描述</h3><p class="pre-wrap muted">{{ product.description || '暂无描述' }}</p><h3>卖点</h3><ol v-if="product.bullet_points.length" class="list-clean"><li v-for="(bullet, index) in product.bullet_points" :key="index">{{ bullet }}</li></ol><p v-else class="muted">暂无卖点</p></section>
       <section class="panel"><div class="panel-heading"><div><p class="eyebrow">DETERMINISTIC CHECK</p><h2>Listing 检查</h2></div><button data-test="listing-check" type="button" class="button ghost" :disabled="busy" @click="inspect">{{ busy ? '检查中…' : '运行检查' }}</button></div><p class="muted">使用本地确定性规则检查，不调用付费模型。</p><div v-if="listing"><p :class="listing.passed ? 'success' : 'error'">{{ listing.passed ? '检查通过' : `${listing.issues.length} 项需改进` }}</p><div v-for="issue in listing.issues" :key="issue.code" class="source-card"><strong>{{ issue.message }}</strong><p class="muted">{{ issue.field }} · {{ issue.suggestion }}</p></div></div></section>
+      <SemanticReviewPanel :product-id="product.id" />
     </template>
     <ConfirmDialog :open="confirmOpen" title="停用商品" message="停用后该商品不会再参与正常运营。确认继续？" :busy="busy" @confirm="deactivate" @cancel="confirmOpen = false" />
   </div>
