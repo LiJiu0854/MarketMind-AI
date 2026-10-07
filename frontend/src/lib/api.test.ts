@@ -113,3 +113,10 @@ it('downloads with bearer and revokes the blob URL', async () => {
   expect(revokeObjectURL).toHaveBeenCalledWith('blob:download')
   click.mockRestore()
 })
+
+it('maps a network failure to a safe and distinguishable error', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch: internal URL')))
+  await expect(apiJson('/products')).rejects.toMatchObject({
+    status: 0, code: 'NETWORK_ERROR', message: '网络连接失败，请检查连接后重试', requestId: null,
+  })
+})

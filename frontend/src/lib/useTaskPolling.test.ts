@@ -37,3 +37,13 @@ it('stops after terminal state or failed load until restarted', async () => {
   expect(load).toHaveBeenCalledTimes(3)
   wrapper.unmount()
 })
+
+it('reports a failed background request to the page', async () => {
+  vi.useFakeTimers()
+  const onError = vi.fn()
+  const failure = new Error('服务暂不可用')
+  const wrapper = mount(defineComponent({ setup() { useTaskPolling(async () => { throw failure }, 1000, onError).start(); return () => null } }))
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(onError).toHaveBeenCalledWith(failure)
+  wrapper.unmount()
+})

@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted } from 'vue'
 
-export function useTaskPolling(load: () => Promise<boolean>, intervalMs = 3000) {
+export function useTaskPolling(load: () => Promise<boolean>, intervalMs = 3000, onError?: (error: unknown) => void) {
   let active = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let inFlight = false
@@ -15,7 +15,7 @@ export function useTaskPolling(load: () => Promise<boolean>, intervalMs = 3000) 
       if (!active || disposed || document.visibilityState === 'hidden') return
       inFlight = true
       try { if (!await load()) stop() }
-      catch { stop() }
+      catch (error) { onError?.(error); stop() }
       finally { inFlight = false; schedule() }
     }, intervalMs)
   }

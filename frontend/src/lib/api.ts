@@ -28,7 +28,9 @@ async function apiRequest(path: string, init: RequestInit = {}, authRequired = t
   if (typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
-  const response = await fetch(`/api/v1${path}`, { ...init, headers })
+  let response: Response
+  try { response = await fetch(`/api/v1${path}`, { ...init, headers }) }
+  catch { throw new ApiError(0, 'NETWORK_ERROR', '网络连接失败，请检查连接后重试', null) }
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null)
     const error = body && typeof body === 'object' ? body as Record<string, unknown> : {}

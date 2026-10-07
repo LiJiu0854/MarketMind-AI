@@ -25,3 +25,26 @@ it('ignores stale product response after filters change', async () => {
   expect(wrapper.text()).toContain('新商品')
   expect(wrapper.text()).not.toContain('新建商品')
 })
+
+it('reports row-level xlsx import errors and rejects other extensions', async () => {
+  currentUser.value = { id: 2, email: 'o@example.com', full_name: '运营', role: 'operator', is_active: true, created_at: '', updated_at: '' }
+  const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => new Response(JSON.stringify(
+    init?.method === 'POST'
+      ? { total_rows: 2, imported_rows: 1, failed_rows: 1, errors: [{ row: 3, field: 'price', code: 'INVALID_PRICE', message: '价格无效' }] }
+      : { items: [], total: 0, page: 1, page_size: 20 },
+  )))
+  vi.stubGlobal('fetch', fetchMock)
+  const wrapper = mount(ProductsPage, { global: { stubs: ['RouterLink'] } })
+  await vi.waitFor(() => expect(wrapper.text()).toContain('暂无商品'))
+  const input = wrapper.get('input[type="file"]')
+  Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['bad'], 'data.csv')] })
+  await input.trigger('change')
+  expect(wrapper.text()).toContain('请上传 .xlsx')
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['file'], 'data.xlsx')] })
+  await input.trigger('change')
+  await vi.waitFor(() => expect(wrapper.text()).toContain('价格无效'))
+  expect(wrapper.text()).toContain('成功 1 行')
+  const upload = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')
+  expect(upload?.[1].body).toBeInstanceOf(FormData)
+})

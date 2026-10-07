@@ -5,8 +5,13 @@ import type { ProductInput } from './types'
 const props = defineProps<{ initial?: ProductInput; busy?: boolean }>()
 const emit = defineEmits<{ submit: [input: ProductInput] }>()
 const empty = (): ProductInput => ({ sku: '', title: '', description: '', bullet_points: [''], brand: '', category: '', price: '', currency: 'CNY', is_active: true })
-const form = ref<ProductInput>(props.initial ? structuredClone(props.initial) : empty())
-watch(() => props.initial, (value) => { if (value) form.value = structuredClone(value) })
+const copy = (value: ProductInput): ProductInput => ({
+  sku: value.sku, title: value.title, description: value.description,
+  bullet_points: [...value.bullet_points], brand: value.brand, category: value.category,
+  price: value.price, currency: value.currency, is_active: value.is_active,
+})
+const form = ref<ProductInput>(props.initial ? copy(props.initial) : empty())
+watch(() => props.initial, (value) => { if (value) form.value = copy(value) })
 function submit() {
   const input = { ...form.value, sku: form.value.sku.trim(), title: form.value.title.trim(), price: form.value.price.trim(), bullet_points: form.value.bullet_points.map((item) => item.trim()).filter(Boolean) }
   if (!input.sku || !input.title || !/^\d+(?:\.\d{1,2})?$/.test(input.price) || Number(input.price) <= 0) return

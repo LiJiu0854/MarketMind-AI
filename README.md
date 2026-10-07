@@ -2,7 +2,7 @@
 
 MarketMind AI 是面向电商运营团队的 AI 商品运营与竞品研究平台。
 
-当前已完成阶段 7 后端主链路：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
+当前已完成阶段 7 后端主链路，并新增单元 8 Vue 企业工作台：用户认证与 RBAC、共享商品 CRUD、`.xlsx`
 同步导入、确定性 Listing 检查和筛选导出，以及异步 LLM Listing 语义审核与
 MySQL 历史持久化；另有 PDF/MD/TXT 知识库、异步向量索引、带来源引用的 RAG 问答，
 以及基于已上传资料的受控竞品研究、人工审核与 Excel 交付。
@@ -10,6 +10,7 @@ MySQL 历史持久化；另有 PDF/MD/TXT 知识库、异步向量索引、带�
 ## 环境要求
 
 - Python 3.12
+- Node.js 22.18+ 与 npm（前端）
 - MySQL 8（开发库和只用于测试的 `marketmind_test`）
 - Redis（健康检查、限流、缓存和 Celery 相关测试需要）
 - Docker Desktop 或可访问的 Chroma HTTP 服务（知识库索引与问答需要）
@@ -34,6 +35,31 @@ uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 ```
 
 功能变更遵循红—绿—重构循环：先观察聚焦测试因缺少目标行为而失败，再添加最小实现，最后运行完整质量检查。
+
+## Vue 企业运营工作台（单元 8）
+
+先按下文启动 MySQL、Redis、API；需要文档索引、语义审核或研究时，再启动 Chroma 与 Celery Worker。另开 PowerShell：
+
+```powershell
+cd frontend
+npm ci
+npm run dev
+```
+
+浏览器访问 Vite 输出的本地地址（默认 `http://localhost:5173`）。Vite 仅在开发时把相对 `/api` 转发到 `http://127.0.0.1:8010`。生产环境的同源反向代理、CI、正式部署和系统级 E2E 留到单元 9；不能直接把 Vite 开发服务器作为生产部署。
+
+前端检查：
+
+```powershell
+cd frontend
+npm run test
+npm run typecheck
+npm run build
+```
+
+先用现有 CLI 创建初始 Admin，再从工作台登录；密码按 `/auth/token` 的表单协议发送，Access Token 仅保存在当前标签页 `sessionStorage`，刷新后由 `/auth/me` 复核。Admin 可管理用户、商品和知识库、发起语义审核/研究并一次性审批；Operator 可维护商品、发起审核/研究与问答；Analyst 可查看商品/知识库/结果、运行确定性 Listing 检查和知识问答。三个角色均可按当前筛选导出商品、下载已批准研究报告。按钮可见性只是体验，最终权限以 FastAPI JWT/RBAC 为准。
+
+商品和研究 Excel 走带认证的 Blob 下载，不把 Token 放在 URL；异步任务只读取 MySQL 业务状态。模型密钥和供应商切换继续位于服务端 `.env` 的 `LLM_*`、`EMBEDDING_*`（后文说明），前端不配置密钥，也不会由前端测试发起真实付费调用。未配置 MySQL/Redis/Chroma/模型时相关操作应显示真实失败状态；不要把模拟测试视为端到端验收。
 
 ## 商品接口
 

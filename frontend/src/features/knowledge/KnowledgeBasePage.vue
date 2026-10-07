@@ -24,7 +24,7 @@ const polling = useTaskPolling(async () => {
   const result = await listDocuments(baseId, docPage.value)
   documents.value = result.items; docTotal.value = result.total
   return result.items.some((item) => item.status === 'pending' || item.status === 'processing')
-})
+}, 3000, (cause) => { error.value = cause instanceof Error ? cause.message : '文档状态读取失败，请重试' })
 async function loadDocuments() {
   try {
     const result = await listDocuments(baseId, docPage.value)
