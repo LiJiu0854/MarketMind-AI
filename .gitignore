@@ -33,3 +33,8 @@ Thumbs.db
 
 # Uploaded knowledge-base files
 data/knowledge/
+
+# Vue workspace dependencies, build output, and task-local npm cache
+frontend/node_modules/
+frontend/dist/
+frontend/.npm-cache/
