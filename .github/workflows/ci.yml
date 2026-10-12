@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "phase/**", "codex/**"]
+  pull_request:
+    branches: [main, "phase/**", "codex/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: registry-1.docker.io/library/mysql:8.4.8
+        env:
+          MYSQL_ROOT_PASSWORD: fixture-only-ci-root
+          MYSQL_DATABASE: marketmind_test
+          MYSQL_USER: marketmind
+          MYSQL_PASSWORD: fixture-only-ci-app
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -pfixture-only-ci-root --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: registry-1.docker.io/library/redis:8.2-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping | grep -q PONG"
+          --health-interval=5s --health-timeout=3s --health-retries=15
+    env:
+      TEST_DATABASE_URL: mysql+asyncmy://marketmind:fixture-only-ci-app@127.0.0.1:3306/marketmind_test
+      REDIS_URL: redis://127.0.0.1:6379/0
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      JWT_SECRET: fixture-only-ci-jwt-secret
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install backend
+        run: python -m pip install -e ".[dev]"
+      - name: Migrate isolated test database
+        run: alembic -x database=test upgrade head
+      - name: Backend tests
+        run: python -m pytest tests -q
+      - name: Ruff
+        run: python -m ruff check backend scripts tests
+      - name: Mypy
+        run: python -m mypy backend scripts/check_compose.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Validate private Compose contract
+        run: |
+          set -o pipefail
+          docker compose --env-file tests/fixtures/deploy.env config --format json | python scripts/check_compose.py
+      - name: Build application images
+        run: docker compose --env-file tests/fixtures/deploy.env build
+
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: marketmind-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_ADMIN_EMAIL: admin@fixture.example.com
+      E2E_ADMIN_PASSWORD: fixture-only-admin-password
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install browser test dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Start isolated synthetic stack
+        run: docker compose --env-file tests/fixtures/deploy.env -f compose.yaml -f compose.e2e.yaml up -d --build --wait --wait-timeout 300
+      - name: Create synthetic administrator
+        run: |
+          printf '%s\n' "$E2E_ADMIN_PASSWORD" | docker compose --env-file tests/fixtures/deploy.env -f compose.yaml -f compose.e2e.yaml exec -T api python -m app.cli.create_admin --email "$E2E_ADMIN_EMAIL" --full-name 'Fixture Admin' --password-stdin
+      - name: Browser acceptance
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Preserve failed traces briefly
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-traces-${{ github.run_id }}-${{ github.run_attempt }}
+          path: frontend/test-results/
+          retention-days: 3
+          if-no-files-found: ignore
+      - name: Remove only this CI project
+        if: always()
+        run: docker compose --env-file tests/fixtures/deploy.env -f compose.yaml -f compose.e2e.yaml down --volumes --remove-orphans

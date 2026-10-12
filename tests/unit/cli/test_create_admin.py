@@ -1,5 +1,6 @@
 """管理员创建 CLI 测试。"""
 
+import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -26,6 +27,31 @@ def test_read_admin_data_uses_hidden_password_and_admin_role(
     assert str(data.email) == "admin@example.com"
     assert data.full_name == "MarketMind Admin"
     assert data.role is Role.ADMIN
+
+
+def test_noninteractive_admin_reads_password_only_from_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(create_admin.sys, "stdin", io.StringIO("correct-horse-battery-staple\n"))
+    monkeypatch.setattr(create_admin, "getpass", lambda _prompt: pytest.fail("getpass called"))
+    data = create_admin.read_admin_data(
+        ["--email", "ADMIN@EXAMPLE.COM", "--full-name", "Test Admin", "--password-stdin"]
+    )
+    assert str(data.email) == "admin@example.com"
+    assert data.full_name == "Test Admin"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--email", "admin@example.com", "--password-stdin"],
+        ["--full-name", "Test Admin", "--password-stdin"],
+        ["--email", "admin@example.com", "--full-name", "Test Admin"],
+    ],
+)
+def test_noninteractive_admin_requires_complete_flag_set(argv: list[str]) -> None:
+    with pytest.raises(SystemExit):
+        create_admin.read_admin_data(argv)
 
 
 @pytest.mark.asyncio

@@ -79,6 +79,23 @@ def test_settings_have_safe_defaults() -> None:
     assert settings.app_debug is False
 
 
+def test_reads_docker_secret_files(tmp_path: Path) -> None:
+    """容器文件密钥必须进入 SecretStr，且不泄露到 repr。"""
+    assert Settings.model_config["secrets_dir"] == (
+        "/run/secrets" if Path("/run/secrets").is_dir() else None
+    )
+    database_url = "mysql+asyncmy://marketmind:fixture@mysql:3306/marketmind"
+    (tmp_path / "database_url").write_text(database_url, encoding="utf-8")
+    (tmp_path / "jwt_secret").write_text("fixture-jwt-secret", encoding="utf-8")
+
+    settings = Settings(_env_file=None, _secrets_dir=tmp_path)  # type: ignore[call-arg]
+
+    assert settings.database_url == SecretStr(database_url)
+    assert settings.jwt_secret == SecretStr("fixture-jwt-secret")
+    assert database_url not in repr(settings)
+    assert Settings(_env_file=None).database_url is None  # type: ignore[call-arg]
+
+
 def test_llm_settings_have_portable_safe_defaults() -> None:
     settings = Settings()
 

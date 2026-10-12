@@ -1,0 +1,1 @@
+mysql+asyncmy://marketmind:fixture-only-app-pass@mysql:3306/marketmind

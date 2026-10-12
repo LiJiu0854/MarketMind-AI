@@ -1,0 +1,8 @@
+FROM registry-1.docker.io/library/python:3.12.12-slim-bookworm
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY backend/ ./backend/
+RUN pip install --no-cache-dir .
+COPY tests/e2e/model_stub.py ./model_stub.py
+EXPOSE 8000
+CMD ["python", "model_stub.py"]

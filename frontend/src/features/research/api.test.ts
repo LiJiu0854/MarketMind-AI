@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createResearch, downloadResearchRun, getResearchRun } from './api'
 
-afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear(); vi.restoreAllMocks() })
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); sessionStorage.clear(); vi.restoreAllMocks() })
 
 it('trims goal and rejects duplicate or out-of-range knowledge-base IDs', async () => {
   const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: 7, task_id: 'job-1', status: 'pending' }), { status: 202 }))
@@ -22,8 +22,11 @@ it('reads accepted run by returned ID and downloads with bearer', async () => {
   vi.stubGlobal('URL', class extends NativeURL { static createObjectURL = vi.fn().mockReturnValue('blob:report'); static revokeObjectURL = revoke })
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
   await getResearchRun(2, 7)
+  vi.useFakeTimers()
   await downloadResearchRun(2, 7)
   expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/products/2/research-runs/7')
   expect(new Headers(fetchMock.mock.calls[1][1].headers).get('Authorization')).toBe('Bearer token')
+  expect(revoke).not.toHaveBeenCalled()
+  vi.runAllTimers()
   expect(revoke).toHaveBeenCalledWith('blob:report')
 })

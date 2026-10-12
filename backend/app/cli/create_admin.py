@@ -1,6 +1,8 @@
 """交互式创建首个管理员。"""
 
+import argparse
 import asyncio
+import sys
 from getpass import getpass
 
 from pydantic import ValidationError
@@ -13,8 +15,22 @@ from app.schemas.user import UserCreate
 from app.services.users import create_user
 
 
-def read_admin_data() -> UserCreate:
+def read_admin_data(argv: list[str] | None = None) -> UserCreate:
     """从终端读取管理员资料，密码不会回显。"""
+    if argv:
+        parser = argparse.ArgumentParser(description="创建首个管理员")
+        parser.add_argument("--email")
+        parser.add_argument("--full-name")
+        parser.add_argument("--password-stdin", action="store_true")
+        args = parser.parse_args(argv)
+        if not (args.email and args.full_name and args.password_stdin):
+            parser.error("--email、--full-name、--password-stdin 必须同时提供")
+        return UserCreate(
+            email=args.email.strip().lower(),
+            full_name=args.full_name.strip(),
+            password=sys.stdin.readline().rstrip("\r\n"),
+            role=Role.ADMIN,
+        )
     return UserCreate(
         email=input("请输入管理员邮箱: ").strip().lower(),
         full_name=input("请输入管理员姓名: ").strip(),
@@ -23,10 +39,10 @@ def read_admin_data() -> UserCreate:
     )
 
 
-async def main() -> int:
+async def main(argv: list[str] | None = None) -> int:
     """读取配置并通过统一 Service 创建管理员。"""
     try:
-        data = read_admin_data()
+        data = read_admin_data(argv) if argv is not None else read_admin_data()
     except ValidationError:
         print("创建失败: 输入数据不符合要求")
         return 1
@@ -55,4 +71,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(asyncio.run(main(sys.argv[1:])))

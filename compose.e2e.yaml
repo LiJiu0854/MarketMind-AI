@@ -1,0 +1,27 @@
+services:
+  model-stub:
+    build: {context: ., dockerfile: tests/e2e/Dockerfile.model-stub}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    environment:
+      LLM_MODEL: fixture-chat
+      LLM_BASE_URL: http://model-stub:8000/v1
+      EMBEDDING_MODEL: fixture-embedding
+      EMBEDDING_BASE_URL: http://model-stub:8000/v1
+    depends_on:
+      model-stub: {condition: service_healthy}
+
+  celery-worker:
+    environment:
+      LLM_MODEL: fixture-chat
+      LLM_BASE_URL: http://model-stub:8000/v1
+      EMBEDDING_MODEL: fixture-embedding
+      EMBEDDING_BASE_URL: http://model-stub:8000/v1
+    depends_on:
+      model-stub: {condition: service_healthy}

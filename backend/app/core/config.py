@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        secrets_dir="/run/secrets" if Path("/run/secrets").is_dir() else None,
         case_sensitive=False,
         extra="ignore",
     )

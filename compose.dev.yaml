@@ -1,0 +1,5 @@
+# 显式开发覆盖：只在需要从宿主机直连 Redis 时加 -f compose.dev.yaml。
+services:
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"

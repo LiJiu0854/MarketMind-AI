@@ -1,38 +1,151 @@
 services:
-  redis:
-    image: redis:8.2-alpine
-    container_name: marketmind-redis
+  mysql:
+    image: registry-1.docker.io/library/mysql:8.4.8
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:6379:6379"
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
-    # exec 让 Redis 接收容器停止信号；$$ 让变量留到容器内展开。
-    command: >-
-      sh -c 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes'
-    volumes:
-      - redis_data:/data
+      MYSQL_DATABASE: marketmind
+      MYSQL_USER: marketmind
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_app_password
+    secrets: [mysql_root_password, mysql_app_password]
+    volumes: [mysql_data:/var/lib/mysql]
     healthcheck:
-      # CMD-SHELL 会调用 shell 执行命令，用 $$ 传递 REDIS_PASSWORD。
-      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$(cat /run/secrets/mysql_root_password)\" mysqladmin ping -h 127.0.0.1 -u root --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  redis:
+    image: registry-1.docker.io/library/redis:8.2-alpine
+    restart: unless-stopped
+    command:
+      - sh
+      - -ec
+      - |
+        umask 077
+        printf 'requirepass %s\nappendonly yes\n' "$$(cat /run/secrets/redis_password)" > /tmp/redis.conf
+        exec redis-server /tmp/redis.conf
+    secrets: [redis_password]
+    tmpfs: [/tmp]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(cat /run/secrets/redis_password)\" redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 15
+
+  chroma:
+    build: {context: ., dockerfile: deploy/Dockerfile.chroma}
+    image: marketmind-chroma:1.5.5-curl
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      PERSIST_DIRECTORY: /data
+      ANONYMIZED_TELEMETRY: "FALSE"
+    volumes: [chroma_data:/data]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  migration:
+    build: {context: .}
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    secrets: [database_url]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  api:
+    build: {context: .}
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8010"]
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      CHROMA_HOST: chroma
+      KNOWLEDGE_FILE_ROOT: /app/data/knowledge
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+    secrets: [database_url, jwt_secret, redis_url, celery_broker_url, celery_result_backend, llm_api_key, embedding_api_key]
+    volumes: [knowledge_data:/app/data/knowledge]
+    depends_on:
+      migration: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/v1/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   celery-worker:
-    build:
-      context: .
-    container_name: marketmind-celery-worker
+    build: {context: .}
     restart: unless-stopped
-    command: celery -A app.celery_app:celery_app worker --loglevel=INFO
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO"]
     environment:
-      DATABASE_URL: ${WORKER_DATABASE_URL:?必须设置}
-      REDIS_URL: ${WORKER_REDIS_URL:?必须设置}
-      CELERY_BROKER_URL: ${WORKER_CELERY_BROKER_URL:?必须设置}
-      CELERY_RESULT_BACKEND: ${WORKER_CELERY_RESULT_BACKEND:?必须设置}
+      APP_ENV: production
+      APP_DEBUG: "false"
+      CHROMA_HOST: chroma
+      KNOWLEDGE_FILE_ROOT: /app/data/knowledge
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.openai.com/v1}
+    secrets: [database_url, redis_url, celery_broker_url, celery_result_backend, llm_api_key, embedding_api_key]
+    volumes: [knowledge_data:/app/data/knowledge]
     depends_on:
-      redis:
-        condition: service_healthy
+      migration: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app:celery_app inspect ping --timeout=5 | grep -q pong"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+
+  web:
+    build: {context: ., dockerfile: frontend/Dockerfile}
+    restart: unless-stopped
+    ports: ["127.0.0.1:${MARKETMIND_WEB_PORT:-8080}:80"]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
 volumes:
+  mysql_data:
   redis_data:
+  chroma_data:
+  knowledge_data:
+
+secrets:
+  mysql_root_password:
+    file: ${MYSQL_ROOT_PASSWORD_FILE:-./deploy/secrets/mysql_root_password}
+  mysql_app_password:
+    file: ${MYSQL_APP_PASSWORD_FILE:-./deploy/secrets/mysql_app_password}
+  database_url:
+    file: ${DATABASE_URL_FILE:-./deploy/secrets/database_url}
+  jwt_secret:
+    file: ${JWT_SECRET_FILE:-./deploy/secrets/jwt_secret}
+  redis_password:
+    file: ${REDIS_PASSWORD_FILE:-./deploy/secrets/redis_password}
+  redis_url:
+    file: ${REDIS_URL_FILE:-./deploy/secrets/redis_url}
+  celery_broker_url:
+    file: ${CELERY_BROKER_URL_FILE:-./deploy/secrets/celery_broker_url}
+  celery_result_backend:
+    file: ${CELERY_RESULT_BACKEND_FILE:-./deploy/secrets/celery_result_backend}
+  llm_api_key:
+    file: ${LLM_API_KEY_FILE:-./deploy/secrets/llm_api_key}
+  embedding_api_key:
+    file: ${EMBEDDING_API_KEY_FILE:-./deploy/secrets/embedding_api_key}

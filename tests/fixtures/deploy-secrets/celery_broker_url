@@ -1,0 +1,1 @@
+redis://:fixture-only-redis-pass@redis:6379/1

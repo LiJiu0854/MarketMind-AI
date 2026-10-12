@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { apiFile, apiJson } from './api'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   sessionStorage.clear()
 })
@@ -99,6 +100,7 @@ it.each([409, 422, 429])('keeps server error details for %i', async (status) => 
 })
 
 it('downloads with bearer and revokes the blob URL', async () => {
+  vi.useFakeTimers()
   sessionStorage.setItem('marketmind_access_token', 'download-token')
   const fetchMock = vi.fn().mockResolvedValue(new Response('xlsx', { status: 200 }))
   vi.stubGlobal('fetch', fetchMock)
@@ -110,6 +112,8 @@ it('downloads with bearer and revokes the blob URL', async () => {
   expect(new Headers((fetchMock.mock.calls[0][1] as RequestInit).headers).get('Authorization'))
     .toBe('Bearer download-token')
   expect(click).toHaveBeenCalledOnce()
+  expect(revokeObjectURL).not.toHaveBeenCalled()
+  vi.runAllTimers()
   expect(revokeObjectURL).toHaveBeenCalledWith('blob:download')
   click.mockRestore()
 })

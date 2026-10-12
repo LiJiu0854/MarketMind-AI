@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { currentUser } from '../../lib/session'
 import ResearchPage from './ResearchPage.vue'
 
-afterEach(() => { currentUser.value = null; vi.unstubAllGlobals() })
+afterEach(() => { currentUser.value = null; vi.useRealTimers(); vi.unstubAllGlobals() })
 
 const base = { id: 4, product_id: 1, goal: '机会分析', knowledge_base_ids: [3], product_snapshot: {}, status: 'success', steps: [], evidence: [], report: { outcome: 'insufficient_evidence', summary: '资料不足', findings: [], recommendations: [], evidence_gaps: ['证据不足'] }, total_tokens: 120, review_status: 'not_reviewable', review: null }
 
@@ -59,13 +59,16 @@ it('allows analyst to download only an approved report without rendering report 
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
   const wrapper = mount(ResearchPage, { props: { productId: '1', runId: '4' }, global: { stubs: ['RouterLink'] } })
   await vi.waitFor(() => expect(wrapper.text()).toContain('下载 Excel'))
+  vi.useFakeTimers()
   expect(wrapper.find('img').exists()).toBe(false)
   expect(wrapper.text()).toContain('<img src=x')
   await wrapper.get('button').trigger('click')
   await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/export'))).toBe(true))
   const request = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/export'))
   expect(new Headers(request?.[1]?.headers).get('Authorization')).toBe('Bearer download-token')
-  await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:approved'))
+  await vi.waitFor(() => expect((URL as typeof NativeURL).createObjectURL).toHaveBeenCalled())
+  vi.runAllTimers()
+  expect(revokeObjectURL).toHaveBeenCalledWith('blob:approved')
   sessionStorage.clear()
   vi.restoreAllMocks()
 })

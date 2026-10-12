@@ -55,6 +55,7 @@ export async function apiFile(path: string, filename: string): Promise<void> {
   try {
     link.click()
   } finally {
-    URL.revokeObjectURL(url)
+    // 浏览器可能在 click 返回后才开始读取 Blob，立即释放会取消下载。
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
   }
 }

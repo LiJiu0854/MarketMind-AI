@@ -38,3 +38,9 @@ data/knowledge/
 frontend/node_modules/
 frontend/dist/
 frontend/.npm-cache/
+
+# 单机部署真实密钥、备份与浏览器测试产物
+deploy/secrets/
+deploy/backups/
+frontend/test-results/
+frontend/playwright-report/
