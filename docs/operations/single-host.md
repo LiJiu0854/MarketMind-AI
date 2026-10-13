@@ -101,7 +101,7 @@ docker compose -p marketmind exec api python -m app.cli.create_admin
 
 ## 4. 一致性备份
 
-需要同时保存 MySQL 业务关系、`knowledge_data` 原件卷和 `chroma_data` 向量索引；三者必须来自同一停写窗口。先确认项目名、卷名、备份目录以及可用空间，设置只用于本次操作的变量，例如 `$mmProject = 'marketmind'`、`$mmBackup = 'C:\\MarketMindBackups\\2026-10-08'`。目录应位于受控加密存储且只允许管理员访问；以下命令的目标只限该明确目录。先停入口和所有可能写入的进程：
+需要同时保存 MySQL 业务关系、`knowledge_data` 原件卷和 `chroma_data` 向量索引；三者必须来自同一停写窗口。先确认项目名、卷名、备份目录以及可用空间，设置只用于本次操作的变量，例如 `$mmProject = 'marketmind'`、`$mmBackup = 'C:\\MarketMindBackups\\2026-10-08'`。目录应位于受控加密存储且只允许管理员访问；先用 `docker pull registry-1.docker.io/library/alpine:3.22` 备好归档镜像，避免停写后才等待下载。以下命令的目标只限该明确目录。先停入口和所有可能写入的进程：
 
 ```powershell
 docker compose -p marketmind stop web api celery-worker chroma
@@ -126,8 +126,8 @@ docker run --rm --mount type=volume,source=marketmind-restore-20261008_chroma_da
 docker compose --env-file C:\MarketMindRecovery\restore.env -p marketmind-restore-20261008 up -d --build --wait --wait-timeout 300
 ```
 
-恢复后在隔离入口检查：原商品/用户 ID、知识库文档元数据与原件、Chroma 检索返回的引用坐标一致，已批准研究报告仍能读取和导出。若检查失败，保留隔离项目和日志排查；不要在生产项目中“重试导入”。只有本次演练的项目确认为全新且不再需要时，才可经人工复核执行 `docker compose --env-file C:\MarketMindRecovery\restore.env -p marketmind-restore-20261008 down --volumes`。真实生产备份恢复应在授权维护窗口单独演练，本单元的合成数据演练不代表它已通过。
+恢复后在隔离入口检查：原商品/用户 ID、知识库文档元数据与原件、Chroma 检索返回的引用坐标一致，已批准研究报告仍能读取和导出。具体做法是在源项目和恢复项目运行相同的只读查询：用 MySQL `SELECT` 比对商品 ID、SKU、文档状态及路径、研究报告和证据哈希、审核决定；用 `sha256sum` 比对知识原件；用 Chroma `get(include=['documents','metadatas'])` 比对向量 ID、文本与来源元数据。三组结果都一致后，再检查恢复入口 `/api/v1/health/ready`。若检查失败，保留隔离项目和日志排查；不要在生产项目中“重试导入”。只有本次演练的项目确认为全新且不再需要时，才可经人工复核执行 `docker compose --env-file C:\MarketMindRecovery\restore.env -p marketmind-restore-20261008 down --volumes`。真实生产备份恢复应在授权维护窗口单独演练，合成数据演练不代表生产恢复已通过。
 
 ## 6. 当前验收边界
 
-2026-10-08 的本机合成栈验收：`mm_phase9_local` 完成镜像构建，迁移退出码 0，MySQL/Redis/Chroma/API/Worker/Web 与模型桩健康；仅 Web 发布 `127.0.0.1:8080`，`/`、深层 `/products` 和同源 `/api/v1/health/ready` 均返回 200。Chromium 三条真实页面旅程全部通过：Admin 商品与 Excel 往返、Analyst 权限限制，以及知识上传/索引/问答、语义审核、证据研究、一次性批准与导出。全部容器强制重建后再次达到健康状态。2026-10-12 重启 Docker 引擎后只读核对：MySQL 有 9 个商品、2 份 `ready` 文档、2 个成功研究；知识卷有 3 个文件；Chroma 有 2 个集合且各含 1 条向量，数量与重建前记录一致。这证明合成数据在此次容器重建后仍可读，但未逐条比对内容和来源引用。同日重跑浏览器验收时，模型桩因旧配置无重启策略而保持退出，知识索引失败；给 `compose.e2e.yaml` 的模型桩添加 `restart: unless-stopped`、只重建该测试服务后，三条 Chromium 旅程重新通过。迁移失败注入、独立 SQL/两卷恢复、三档视觉/键盘检查也未完成。远端 GitHub Actions 只有推送后才能证明运行状态；公网 TLS、真实付费模型调用和生产数据恢复不属于本次合成验收。
+2026-10-08 的本机合成栈验收：`mm_phase9_local` 完成镜像构建，迁移退出码 0，MySQL/Redis/Chroma/API/Worker/Web 与模型桩健康；仅 Web 发布 `127.0.0.1:8080`，`/`、深层 `/products` 和同源 `/api/v1/health/ready` 均返回 200。Chromium 三条真实页面旅程全部通过：Admin 商品与 Excel 往返、Analyst 权限限制，以及知识上传/索引/问答、语义审核、证据研究、一次性批准与导出。全部容器强制重建后再次达到健康状态。2026-10-12 重启 Docker 引擎后只读核对：MySQL 有 9 个商品、2 份 `ready` 文档、2 个成功研究；知识卷有 3 个文件；Chroma 有 2 个集合且各含 1 条向量，数量与重建前记录一致。同日重跑浏览器验收时，模型桩因旧配置无重启策略而保持退出，知识索引失败；给 `compose.e2e.yaml` 的模型桩添加 `restart: unless-stopped`、只重建该测试服务后，三条 Chromium 旅程重新通过。2026-10-13 对同一合成项目停写备份 SQL、知识原件卷和 Chroma 卷，在新建的 `mm_restore_20261013` 项目恢复：源与目标的 22 行关键业务记录、5 个原件 SHA-256、Chroma 集合的向量 ID/文本/元数据逐项一致；双方均有 7 个用户、14 个商品、5 份文档、3 个成功研究及 3 条批准记录，恢复入口返回 200。演练项目及其四个卷已清理，源合成项目仍可用；备份留在本地忽略目录 `deploy/backups/2026-10-13-restore-drill/`，未提交。迁移失败注入、三档视觉/键盘检查仍未完成。远端 GitHub Actions 状态未核实；公网 TLS、真实付费模型调用和生产数据恢复不属于本次合成验收。
