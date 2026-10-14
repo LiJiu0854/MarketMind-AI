@@ -97,6 +97,8 @@ docker compose -p marketmind exec api python -m app.cli.create_admin
 
 `docker compose -p marketmind ps -a` 先找失败服务；`docker compose -p marketmind logs --tail 200 <service>` 查看对应容器。迁移失败先检查 MySQL 健康状态、密钥文件和 Alembic 版本，不能强行启动 API。`curl.exe -i http://127.0.0.1:8080/api/v1/health/live` 只测进程；`/health/ready` 同时检查 MySQL/Redis，不证明 Chroma、Worker、真实模型已可用。文档长时间未 `ready` 时分别看 `celery-worker`、`chroma` 日志。业务错误响应中的 `request_id` 与 API 日志中的 `X-Request-ID` 用于关联请求；不要把凭证、上传原文或模型密钥粘贴到公开工单。
 
+迁移容器若以非零码退出，依赖 `service_completed_successfully` 的 API/Worker 即使已被 Compose 创建，也应保持 `Created` 而不启动。修正 Secret **来源文件路径**后，只重跑迁移可能不够：已创建的 API/Worker 容器仍可能挂载旧路径。先用 `docker inspect <容器名>` 的 `Mounts` 核对 `/run/secrets/database_url` 来源，再在确认属于自己的隔离项目中以正确配置执行 `docker compose -p <项目名> up -d --force-recreate --wait api celery-worker`，复查迁移退出码和两项健康状态。正式环境的容器重建应安排维护窗口，不能照搬合成演练命令。
+
 停止 Web/API/Worker 但保留卷：`docker compose -p marketmind stop web api celery-worker`。`docker compose -p marketmind down` 删除容器和网络，但默认保留命名卷；确认停机窗口后再使用。不要在保留业务数据的项目上使用 `down --volumes`。Redis 是缓存、限流与任务队列，不是业务真相；重新启动后以 MySQL 的任务业务状态、知识原件与 Chroma 索引为准排查未完成任务。
 
 ## 4. 一致性备份
@@ -130,4 +132,6 @@ docker compose --env-file C:\MarketMindRecovery\restore.env -p marketmind-restor
 
 ## 6. 当前验收边界
 
-2026-10-08 的本机合成栈验收：`mm_phase9_local` 完成镜像构建，迁移退出码 0，MySQL/Redis/Chroma/API/Worker/Web 与模型桩健康；仅 Web 发布 `127.0.0.1:8080`，`/`、深层 `/products` 和同源 `/api/v1/health/ready` 均返回 200。Chromium 三条真实页面旅程全部通过：Admin 商品与 Excel 往返、Analyst 权限限制，以及知识上传/索引/问答、语义审核、证据研究、一次性批准与导出。全部容器强制重建后再次达到健康状态。2026-10-12 重启 Docker 引擎后只读核对：MySQL 有 9 个商品、2 份 `ready` 文档、2 个成功研究；知识卷有 3 个文件；Chroma 有 2 个集合且各含 1 条向量，数量与重建前记录一致。同日重跑浏览器验收时，模型桩因旧配置无重启策略而保持退出，知识索引失败；给 `compose.e2e.yaml` 的模型桩添加 `restart: unless-stopped`、只重建该测试服务后，三条 Chromium 旅程重新通过。2026-10-13 对同一合成项目停写备份 SQL、知识原件卷和 Chroma 卷，在新建的 `mm_restore_20261013` 项目恢复：源与目标的 22 行关键业务记录、5 个原件 SHA-256、Chroma 集合的向量 ID/文本/元数据逐项一致；双方均有 7 个用户、14 个商品、5 份文档、3 个成功研究及 3 条批准记录，恢复入口返回 200。演练项目及其四个卷已清理，源合成项目仍可用；备份留在本地忽略目录 `deploy/backups/2026-10-13-restore-drill/`，未提交。迁移失败注入、三档视觉/键盘检查仍未完成。远端 GitHub Actions 状态未核实；公网 TLS、真实付费模型调用和生产数据恢复不属于本次合成验收。
+2026-10-08 的本机合成栈验收：`mm_phase9_local` 完成镜像构建，迁移退出码 0，MySQL/Redis/Chroma/API/Worker/Web 与模型桩健康；仅 Web 发布 `127.0.0.1:8080`，`/`、深层 `/products` 和同源 `/api/v1/health/ready` 均返回 200。Chromium 三条真实页面旅程全部通过：Admin 商品与 Excel 往返、Analyst 权限限制，以及知识上传/索引/问答、语义审核、证据研究、一次性批准与导出。全部容器强制重建后再次达到健康状态。2026-10-12 重启 Docker 引擎后只读核对：MySQL 有 9 个商品、2 份 `ready` 文档、2 个成功研究；知识卷有 3 个文件；Chroma 有 2 个集合且各含 1 条向量，数量与重建前记录一致。同日重跑浏览器验收时，模型桩因旧配置无重启策略而保持退出，知识索引失败；给 `compose.e2e.yaml` 的模型桩添加 `restart: unless-stopped`、只重建该测试服务后，三条 Chromium 旅程重新通过。2026-10-13 对同一合成项目停写备份 SQL、知识原件卷和 Chroma 卷，在新建的 `mm_restore_20261013` 项目恢复：源与目标的 22 行关键业务记录、5 个原件 SHA-256、Chroma 集合的向量 ID/文本/元数据逐项一致；双方均有 7 个用户、14 个商品、5 份文档、3 个成功研究及 3 条批准记录，恢复入口返回 200。演练项目及其四个卷已清理，源合成项目仍可用；备份留在本地忽略目录 `deploy/backups/2026-10-13-restore-drill/`，未提交。三档视觉/键盘检查仍未完成。远端 GitHub Actions 状态未核实；公网 TLS、真实付费模型调用和生产数据恢复不属于本次合成验收。
+
+2026-10-14 在此前不存在的 `mm_migration_fail_20261014` 合成项目注入不可解析的数据库主机：MySQL/Redis 健康，迁移因连接失败退出码为 1，API/Worker 容器保持 `Created`，未接受请求。改回正确测试 Secret 后迁移退出码为 0；检查发现 API/Worker 仍挂载创建时的错误 Secret 路径，导致 API 一度返回 503。只在该隔离项目强制重建两项服务后，它们均健康且挂载来源正确。Compose 契约检查及相关 23 个单元测试通过；演练项目、三个卷、镜像标签和错误夹具均已清理。此结论验证了合成环境的迁移启动门禁与修复流程，不等于生产故障恢复演练。
