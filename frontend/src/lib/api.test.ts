@@ -1,10 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { apiFile, apiJson } from './api'
+import { currentUser } from './session'
 
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   sessionStorage.clear()
+  currentUser.value = null
 })
 
 it('adds bearer token to authenticated API requests', async () => {
@@ -51,6 +53,22 @@ it('clears an expired authenticated session on 401', async () => {
 
   await expect(apiJson('/auth/me')).rejects.toMatchObject({ status: 401 })
   expect(sessionStorage.getItem('marketmind_access_token')).toBeNull()
+})
+
+it('does not clear a newer login when an older request returns 401', async () => {
+  sessionStorage.setItem('marketmind_access_token', 'old-token')
+  let respond!: (response: Response) => void
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise<Response>((resolve) => { respond = resolve })))
+  const pending = apiJson('/products')
+  sessionStorage.setItem('marketmind_access_token', 'new-token')
+  currentUser.value = {
+    id: 2, email: 'new@example.com', full_name: 'New User', role: 'admin', is_active: true,
+    created_at: '', updated_at: '',
+  }
+  respond(new Response('{}', { status: 401 }))
+  await expect(pending).rejects.toMatchObject({ status: 401 })
+  expect(sessionStorage.getItem('marketmind_access_token')).toBe('new-token')
+  expect(currentUser.value?.id).toBe(2)
 })
 
 it('uses a safe error when the server returns non-JSON text', async () => {

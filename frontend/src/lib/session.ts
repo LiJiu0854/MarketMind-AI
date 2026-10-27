@@ -14,9 +14,12 @@ export function clearSession(): void {
 }
 
 export async function restoreSession(): Promise<boolean> {
-  if (!readToken()) return false
+  const token = readToken()
+  if (!token) return false
   try {
-    setCurrentUser(await apiJson<User>('/auth/me'))
+    const user = await apiJson<User>('/auth/me')
+    if (readToken() !== token) return false
+    setCurrentUser(user)
     return true
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return false

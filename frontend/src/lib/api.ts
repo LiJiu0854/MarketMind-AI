@@ -1,4 +1,4 @@
-import { clearSession } from './session'
+import { clearSession, readToken } from './session'
 
 export class ApiError extends Error {
   constructor(
@@ -23,7 +23,7 @@ export async function apiJson<T>(
 
 async function apiRequest(path: string, init: RequestInit = {}, authRequired = true): Promise<Response> {
   const headers = new Headers(init.headers)
-  const token = sessionStorage.getItem('marketmind_access_token')
+  const token = readToken()
   if (authRequired && token) headers.set('Authorization', `Bearer ${token}`)
   if (typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -39,7 +39,7 @@ async function apiRequest(path: string, init: RequestInit = {}, authRequired = t
       ? error.message
       : response.status === 503 ? '服务暂时不可用，请稍后重试' : '请求失败，请稍后重试'
     const requestId = typeof error.request_id === 'string' ? error.request_id : null
-    if (authRequired && response.status === 401) clearSession()
+    if (authRequired && response.status === 401 && readToken() === token) clearSession()
     throw new ApiError(response.status, code, message, requestId)
   }
   return response
