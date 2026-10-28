@@ -27,7 +27,7 @@ function logout() { clearSession(); void router.replace('/login') }
     </aside>
     <div class="workspace-main">
       <header class="topbar"><div class="topbar-title"><span class="topbar-kicker">MARKETMIND / WORKSPACE</span><strong>{{ String(route.meta.title || '工作台') }}</strong></div><div class="account"><span class="avatar">{{ currentUser?.full_name?.slice(0, 1) || 'U' }}</span><span class="account-name">{{ currentUser?.full_name }}<small>{{ currentUser?.role }}</small></span><button type="button" class="text-button" @click="logout">退出</button></div></header>
-      <main class="content"><RouterView /></main>
+      <main class="content"><RouterView :key="route.meta.remountOnParamChange ? route.path : undefined" /></main>
     </div>
   </div>
 </template>
