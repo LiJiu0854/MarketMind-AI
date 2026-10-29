@@ -21,13 +21,17 @@ const error = ref('')
 const notice = ref('')
 const canWrite = computed(() => currentUser.value?.role === 'admin' || currentUser.value?.role === 'operator')
 const id = computed(() => Number(props.id))
+let requestId = 0
 
 async function load() {
-  if (props.id === 'new') return
+  const ownId = ++requestId
+  if (props.id === 'new') { loading.value = false; return }
   loading.value = true; error.value = ''
-  try { product.value = await getProduct(id.value) }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : '商品读取失败' }
-  finally { loading.value = false }
+  try {
+    const result = await getProduct(id.value)
+    if (ownId === requestId) product.value = result
+  } catch (cause) { if (ownId === requestId) error.value = cause instanceof Error ? cause.message : '商品读取失败' }
+  finally { if (ownId === requestId) loading.value = false }
 }
 async function inspect() {
   busy.value = true; error.value = ''
