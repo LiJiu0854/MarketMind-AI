@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from io import BytesIO
+from zipfile import ZipFile
 
 import pandas as pd  # type: ignore[import-untyped]
 import pytest
@@ -172,6 +173,33 @@ def test_read_product_dataframe_rejects_damaged_workbook() -> None:
         read_product_dataframe(b"not-an-xlsx")
 
     assert exc_info.value.code == "EXCEL_INVALID_WORKBOOK"
+
+
+@pytest.mark.parametrize(
+    ("member", "replacement"),
+    [
+        ("[Content_Types].xml", None),
+        ("[Content_Types].xml", b"<Types"),
+        ("xl/worksheets/sheet1.xml", b"<worksheet"),
+    ],
+)
+def test_read_product_dataframe_rejects_broken_xlsx_parts(
+    member: str, replacement: bytes | None
+) -> None:
+    source = workbook_bytes(list(EXCEL_COLUMNS), [valid_row()])
+    output = BytesIO()
+    with ZipFile(BytesIO(source)) as archive, ZipFile(output, "w") as damaged:
+        for entry in archive.infolist():
+            if entry.filename != member:
+                damaged.writestr(entry, archive.read(entry))
+            elif replacement is not None:
+                damaged.writestr(entry, replacement)
+
+    with pytest.raises(AppError) as exc_info:
+        read_product_dataframe(output.getvalue())
+
+    assert exc_info.value.code == "EXCEL_INVALID_WORKBOOK"
+    assert exc_info.value.status_code == 422
 
 
 def test_read_product_dataframe_rejects_empty_workbook() -> None:

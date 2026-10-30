@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
+from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -72,7 +73,7 @@ def read_product_dataframe(content: bytes) -> pd.DataFrame:
             engine="openpyxl",
             dtype=object,
         )
-    except (BadZipFile, InvalidFileException, ValueError) as exc:
+    except (BadZipFile, InvalidFileException, ValueError, KeyError, ParseError) as exc:
         raise AppError(
             code="EXCEL_INVALID_WORKBOOK",
             message="无法解析 Excel 文件，请确认格式正确且未损坏",
